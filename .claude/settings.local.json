@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker compose:*)",
+      "Bash(npx tsc:*)",
+      "Bash(node -e:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run dev:*)",
+      "Bash(timeout /t 5)",
+      "Bash(dir /B C:UsersemuldrewDevRunCoachfrontendsrccomponents)",
+      "Bash(npm run migrate:*)",
+      "Bash(psql:*)",
+      "Bash(node check-columns.js:*)",
+      "Bash(node check-plan-data.js:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill //F //PID 56224)",
+      "Bash(taskkill:*)",
+      "Bash(npm uninstall:*)",
+      "WebSearch"
+    ]
+  }
+}

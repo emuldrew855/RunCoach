@@ -1,0 +1,123 @@
+import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+
+const api = axios.create({
+  baseURL: API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Add JWT token to requests
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('jwt');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Handle authentication errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      localStorage.removeItem('jwt');
+      window.location.href = '/';
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default api;
+
+// Auth API
+export const authAPI = {
+  getCurrentUser: () => api.get('/auth/me'),
+  initiateStravaLogin: () => {
+    window.location.href = `${API_URL}/auth/strava`;
+  },
+};
+
+// Activities API
+export const activitiesAPI = {
+  getActivities: (params?: { limit?: number; offset?: number }) =>
+    api.get('/activities', { params }),
+  syncActivities: () => api.post('/activities/sync'),
+  getStats: (days?: number) => api.get('/activities/stats', { params: { days } }),
+  getHRZones: (days?: number) => api.get('/activities/hr-zones', { params: { days } }),
+};
+
+// Profile API
+export const profileAPI = {
+  getProfile: () => api.get('/profile'),
+  updateProfile: (data: any) => api.put('/profile', data),
+};
+
+// Goals API
+export const goalsAPI = {
+  getGoals: () => api.get('/goals'),
+  createGoal: (data: any) => api.post('/goals', data),
+  updateGoal: (id: number, data: any) => api.put(`/goals/${id}`, data),
+};
+
+// Chat API
+export const chatAPI = {
+  getConversations: () => api.get('/chat/conversations'),
+  createConversation: (title?: string) => api.post('/chat/conversations', { title }),
+  getConversationHistory: (conversationId: string) =>
+    api.get(`/chat/conversations/${conversationId}`),
+  updateConversation: (conversationId: string, title: string) =>
+    api.put(`/chat/conversations/${conversationId}`, { title }),
+  deleteConversation: (conversationId: string) =>
+    api.delete(`/chat/conversations/${conversationId}`),
+  sendMessage: (conversationId: string, message: string) =>
+    api.post('/chat/message', { conversationId, message }, {
+      responseType: 'stream',
+      adapter: 'fetch',
+    }),
+};
+
+// Training Plan API
+export const trainingPlanAPI = {
+  getPlans: () => api.get('/training/plans'),
+  getActivePlan: () => api.get('/training/plans/active'),
+  uploadPlan: (formData: FormData) =>
+    api.post('/training/plans/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  createPlan: (data: any) => api.post('/training/plans', data),
+  updatePlan: (id: number, data: any) => api.put(`/training/plans/${id}`, data),
+  deletePlan: (id: number) => api.delete(`/training/plans/${id}`),
+
+  getWorkouts: (params?: { planId?: number; startDate?: string; endDate?: string; days?: number }) =>
+    api.get('/training/workouts', { params }),
+  createWorkout: (data: any) => api.post('/training/workouts', data),
+  updateWorkout: (id: number, data: any) => api.put(`/training/workouts/${id}`, data),
+  deleteWorkout: (id: number) => api.delete(`/training/workouts/${id}`),
+  completeWorkout: (id: number, activityId: number, status?: string) =>
+    api.post(`/training/workouts/${id}/complete`, { activityId, status }),
+
+  getAlerts: () => api.get('/training/alerts'),
+};
+
+// Agent Actions API
+export const agentActionsAPI = {
+  getPendingActions: () => api.get('/agent/actions/pending'),
+  getPendingAction: (actionId: string) => api.get(`/agent/actions/${actionId}`),
+  approveAction: (actionId: string) => api.post(`/agent/actions/${actionId}/approve`),
+  rejectAction: (actionId: string, reason?: string) =>
+    api.post(`/agent/actions/${actionId}/reject`, { reason }),
+  getPendingActionsCount: () => api.get('/agent/actions/count'),
+};
+
+// Notifications API
+export const notificationsAPI = {
+  getNotifications: (limit?: number) => api.get('/notifications', { params: { limit } }),
+  getUnread: () => api.get('/notifications/unread'),
+  getUnreadCount: () => api.get('/notifications/count'),
+  markAsRead: (notificationId: number) => api.post(`/notifications/${notificationId}/read`),
+  markAllAsRead: () => api.post('/notifications/read-all'),
+  deleteNotification: (notificationId: number) => api.delete(`/notifications/${notificationId}`),
+};

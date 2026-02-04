@@ -1,0 +1,492 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors;
+  }
+}
+
+@layer components {
+  /* Card variants */
+  .card {
+    @apply bg-white dark:bg-neutral-800 rounded-lg shadow-sm
+           border border-neutral-200 dark:border-neutral-700 p-6 transition-colors;
+  }
+
+  .card-subtle {
+    @apply bg-neutral-50 dark:bg-neutral-800/50 rounded-lg
+           border border-neutral-200 dark:border-neutral-700 p-5;
+  }
+
+  .card-stat {
+    @apply bg-white dark:bg-neutral-800 rounded-lg
+           border border-neutral-200 dark:border-neutral-700 p-5
+           transition-all hover:shadow-md;
+  }
+
+  /* Button variants */
+  .btn {
+    @apply px-4 py-2.5 rounded-lg font-medium transition-all
+           inline-flex items-center justify-center gap-2;
+  }
+
+  .btn-primary {
+    @apply bg-brand-orange text-white hover:bg-brand-orange-dark
+           shadow-sm hover:shadow-md;
+  }
+
+  .btn-secondary {
+    @apply bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200
+           hover:bg-neutral-300 dark:hover:bg-neutral-600;
+  }
+
+  .btn-ghost {
+    @apply bg-transparent text-neutral-700 dark:text-neutral-300
+           hover:bg-neutral-100 dark:hover:bg-neutral-800;
+  }
+
+  /* Input */
+  .input {
+    @apply w-full px-4 py-2 border border-neutral-300 dark:border-neutral-600
+           bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100
+           rounded-lg focus:ring-2 focus:ring-brand-orange focus:border-transparent transition-colors;
+  }
+
+  /* Text utilities */
+  .text-secondary {
+    @apply text-neutral-600 dark:text-neutral-400;
+  }
+
+  .text-tertiary {
+    @apply text-neutral-500 dark:text-neutral-500;
+  }
+}
+
+/* Calendar styles - minimal overrides */
+.rbc-month-view .rbc-month-row {
+  min-height: 110px;
+}
+
+.rbc-event {
+  padding: 3px 6px;
+  font-size: 11px;
+  border-radius: 3px;
+}
+
+/* Calendar Toolbar - Better Dark Mode Support */
+.rbc-toolbar {
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border-radius: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rbc-toolbar button {
+  background: white;
+  color: #1f2937;
+  border: none;
+  padding: 0.5rem 1rem;
+  font-weight: 600;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.875rem;
+}
+
+.rbc-toolbar button:hover {
+  background: #f3f4f6;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.rbc-toolbar button:active {
+  background: #e5e7eb;
+  transform: translateY(0);
+}
+
+.rbc-toolbar button.rbc-active {
+  background: #fc5200;
+  color: white;
+}
+
+.rbc-toolbar button.rbc-active:hover {
+  background: #ea4c00;
+}
+
+/* Month header - centered */
+.rbc-toolbar-label {
+  flex-grow: 1;
+  text-align: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: white;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 0 1rem;
+}
+
+/* Dark mode toolbar */
+.dark .rbc-toolbar {
+  background: linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%);
+}
+
+.dark .rbc-toolbar button {
+  background: #374151;
+  color: #f9fafb;
+}
+
+.dark .rbc-toolbar button:hover {
+  background: #4b5563;
+}
+
+.dark .rbc-toolbar button:active {
+  background: #374151;
+}
+
+/* Days of the week header - colored background */
+.rbc-header {
+  padding: 0.75rem 0.5rem;
+  font-weight: 700;
+  font-size: 0.875rem;
+  background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+  border-bottom: 2px solid #d1d5db;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dark .rbc-header {
+  background: linear-gradient(135deg, #374151 0%, #1f2937 100%);
+  border-bottom-color: #4b5563;
+  color: #d1d5db;
+}
+
+/* Show more link styling */
+.rbc-show-more {
+  background-color: rgba(59, 130, 246, 0.1) !important;
+  color: #2563eb !important;
+  font-weight: 600 !important;
+  font-size: 10px !important;
+  padding: 2px 5px !important;
+  margin: 1px 2px !important;
+  border-radius: 3px !important;
+  cursor: pointer !important;
+  text-align: center !important;
+}
+
+.rbc-show-more:hover {
+  background-color: rgba(59, 130, 246, 0.2) !important;
+}
+
+/* Overlay for popup */
+.rbc-overlay {
+  background: white !important;
+  border: 2px solid #e5e7eb !important;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15) !important;
+  border-radius: 8px !important;
+  padding: 8px !important;
+  max-height: 300px !important;
+  overflow-y: auto !important;
+  z-index: 1000 !important;
+}
+
+.rbc-overlay-header {
+  font-weight: 600 !important;
+  padding: 4px 8px !important;
+  border-bottom: 1px solid #e5e7eb !important;
+  margin-bottom: 8px !important;
+}
+
+.rbc-event-label {
+  display: none !important;
+}
+
+/* Dark mode overlay */
+.dark .rbc-overlay {
+  background: #1f2937 !important;
+  border-color: #374151 !important;
+}
+
+.dark .rbc-overlay-header {
+  border-color: #374151 !important;
+  color: white !important;
+}
+
+/* Calendar cells - better dark mode */
+.rbc-day-bg {
+  background: white;
+  border-color: #e5e7eb;
+  position: relative;
+}
+
+.dark .rbc-day-bg {
+  background: #111827;
+  border-color: #374151;
+}
+
+.rbc-today {
+  background-color: #dbeafe !important;
+}
+
+.dark .rbc-today {
+  background-color: #1e3a8a !important;
+}
+
+/* Peak week - border around entire week row */
+.rbc-month-row:has(.peak-week-start) {
+  position: relative;
+  border: 3px solid #f97316 !important;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+  margin: 4px 0;
+  padding: 2px 0;
+  padding-top: 28px;
+}
+
+.dark .rbc-month-row:has(.peak-week-start) {
+  border-color: #ea580c !important;
+  background: linear-gradient(135deg, #7c2d12 0%, #9a3412 100%);
+}
+
+/* Peak week badge centered inside the row */
+.rbc-month-row:has(.peak-week-start)::before {
+  content: '🏔️ PEAK';
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #f97316;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 14px;
+  border-radius: 9999px;
+  z-index: 10;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.dark .rbc-month-row:has(.peak-week-start)::before {
+  background: #ea580c;
+}
+
+/* Taper week - border around entire week row */
+.rbc-month-row:has(.taper-week-start) {
+  position: relative;
+  border: 3px solid #a855f7 !important;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
+  margin: 4px 0;
+  padding: 2px 0;
+  padding-top: 28px;
+}
+
+.dark .rbc-month-row:has(.taper-week-start) {
+  border-color: #9333ea !important;
+  background: linear-gradient(135deg, #581c87 0%, #6b21a8 100%);
+}
+
+/* Taper week badge centered inside the row */
+.rbc-month-row:has(.taper-week-start)::before {
+  content: '📉 TAPER';
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #a855f7;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 14px;
+  border-radius: 9999px;
+  z-index: 10;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.dark .rbc-month-row:has(.taper-week-start)::before {
+  background: #9333ea;
+}
+
+/* Current week - subtle border around entire week row */
+.rbc-month-row:has(.current-week-start) {
+  position: relative;
+  border: 2px solid #3b82f6 !important;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  margin-top: 20px !important;
+  margin-bottom: 4px;
+  padding: 2px 0;
+  padding-top: 28px;
+}
+
+.dark .rbc-month-row:has(.current-week-start) {
+  border-color: #2563eb !important;
+  background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+}
+
+/* Current week badge centered inside the row */
+.rbc-month-row:has(.current-week-start)::before {
+  content: '📍 THIS WEEK';
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #3b82f6;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 14px;
+  border-radius: 9999px;
+  z-index: 10;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.dark .rbc-month-row:has(.current-week-start)::before {
+  background: #2563eb;
+}
+
+/* Carb-loading day styling - just show emoji indicator */
+.rbc-day-bg.carb-loading-day::before {
+  content: '🍝';
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  font-size: 18px;
+  z-index: 10;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.rbc-day-bg.carb-loading-day::before:hover {
+  transform: scale(1.3);
+  background: rgba(251, 191, 36, 0.2);
+}
+
+.rbc-off-range-bg {
+  background: #f9fafb;
+}
+
+.dark .rbc-off-range-bg {
+  background: #0f172a;
+}
+
+/* Date numbers in cells */
+.rbc-date-cell {
+  padding: 0.5rem;
+}
+
+.rbc-date-cell button {
+  color: #374151;
+  font-weight: 600;
+}
+
+.dark .rbc-date-cell button {
+  color: #d1d5db;
+}
+
+.rbc-off-range .rbc-date-cell button {
+  color: #9ca3af;
+}
+
+.dark .rbc-off-range .rbc-date-cell button {
+  color: #6b7280;
+}
+
+/* Drag and Drop Styling */
+.rbc-addons-dnd .rbc-addons-dnd-resizable {
+  cursor: move;
+}
+
+.rbc-addons-dnd-dragging {
+  opacity: 0.5;
+  cursor: move !important;
+}
+
+.rbc-addons-dnd-over {
+  background-color: rgba(59, 130, 246, 0.1) !important;
+}
+
+.dark .rbc-addons-dnd-over {
+  background-color: rgba(59, 130, 246, 0.2) !important;
+}
+
+/* Show cursor change on draggable events */
+.rbc-event.rbc-addons-dnd-draggable {
+  cursor: move;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.rbc-event.rbc-addons-dnd-draggable:hover {
+  transform: scale(1.02);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Non-draggable events (completed activities) */
+.rbc-event:not(.rbc-addons-dnd-draggable) {
+  cursor: pointer;
+}
+
+/* Markdown in chat messages */
+.prose {
+  color: inherit;
+}
+
+.prose strong {
+  font-weight: 600;
+}
+
+.prose code {
+  background-color: rgba(0, 0, 0, 0.1);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.dark .prose code {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.prose pre {
+  background-color: rgba(0, 0, 0, 0.05);
+  padding: 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.dark .prose pre {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.prose pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+}
+
+.prose ul, .prose ol {
+  padding-left: 1.5em;
+}
+
+.prose blockquote {
+  border-left: 3px solid rgba(0, 0, 0, 0.2);
+  padding-left: 1em;
+  font-style: italic;
+}
+
+.dark .prose blockquote {
+  border-left-color: rgba(255, 255, 255, 0.2);
+}
