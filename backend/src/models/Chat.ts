@@ -3,7 +3,14 @@ import { Conversation, ChatMessage } from '../types/models';
 
 export async function getConversationsByUserId(userId: number): Promise<Conversation[]> {
   const result = await query(
-    'SELECT * FROM conversations WHERE user_id = $1 ORDER BY last_message_at DESC NULLS LAST, created_at DESC',
+    `SELECT DISTINCT ON (c.id) c.*
+     FROM conversations c
+     WHERE c.user_id = $1
+       AND EXISTS (
+         SELECT 1 FROM chat_messages m
+         WHERE m.conversation_id = c.id
+       )
+     ORDER BY c.id DESC, c.last_message_at DESC NULLS LAST, c.created_at DESC`,
     [userId]
   );
   return result.rows;
@@ -64,6 +71,14 @@ export async function updateConversationTitle(conversationId: string, title: str
   const result = await query(
     'UPDATE conversations SET title = $1 WHERE id = $2 RETURNING *',
     [title, conversationId]
+  );
+  return result.rows[0];
+}
+
+export async function updateMessagePendingActions(messageId: number, pendingActionIds: string[]): Promise<ChatMessage> {
+  const result = await query(
+    'UPDATE chat_messages SET pending_actions = $1 WHERE id = $2 RETURNING *',
+    [pendingActionIds, messageId]
   );
   return result.rows[0];
 }

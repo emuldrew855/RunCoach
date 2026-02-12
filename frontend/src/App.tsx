@@ -8,6 +8,13 @@ import ChatPage from './pages/ChatPage';
 import ProfilePage from './pages/ProfilePage';
 import { TrainingPlanPage } from './pages/TrainingPlanPage';
 import Layout from './components/common/Layout';
+import AdminDashboard from './pages/admin/AdminDashboard';
+import UsersPage from './pages/admin/UsersPage';
+import UserDetailPage from './pages/admin/UserDetailPage';
+import TelemetryPage from './pages/admin/TelemetryPage';
+import ErrorsPage from './pages/admin/ErrorsPage';
+import AuditLogsPage from './pages/admin/AuditLogsPage';
+import TokenUsagePage from './pages/admin/TokenUsagePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -71,6 +78,62 @@ function App() {
         element={
           <ProtectedRoute>
             <TrainingPlanPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute>
+            <AdminDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/users"
+        element={
+          <ProtectedRoute>
+            <UsersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/users/:userId"
+        element={
+          <ProtectedRoute>
+            <UserDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/telemetry"
+        element={
+          <ProtectedRoute>
+            <TelemetryPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/errors"
+        element={
+          <ProtectedRoute>
+            <ErrorsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/audit"
+        element={
+          <ProtectedRoute>
+            <AuditLogsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/token-usage"
+        element={
+          <ProtectedRoute>
+            <TokenUsagePage />
           </ProtectedRoute>
         }
       />

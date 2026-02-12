@@ -112,3 +112,31 @@ export async function getActivityStreams(
     throw error;
   }
 }
+
+/**
+ * Get activity zones (heart rate, power zones)
+ * Summit Feature - requires activity:read or activity:read_all
+ */
+export async function getActivityZones(
+  userId: number,
+  activityId: number
+): Promise<any> {
+  const accessToken = await refreshStravaToken(userId);
+
+  try {
+    const response = await axios.get(
+      `${stravaConfig.apiBaseUrl}/activities/${activityId}/zones`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+
+    return response.data;
+  } catch (error: any) {
+    // Strava returns 404 if no zones available (not a Summit feature or no zones data)
+    if (error.response?.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+}

@@ -9,8 +9,11 @@ import compression from 'compression';
 import morgan from 'morgan';
 import routes from './routes';
 import { errorHandler } from './middleware/errorHandler';
+import { telemetryMiddleware, sessionTrackingMiddleware } from './middleware/telemetry';
 import { testConnection, runMigrations } from './config/database';
-import { startWeeklyAnalysisJob } from './jobs/weeklyAnalysisJob';
+import { startWeeklyAnalysisJob } from './agent/jobs/weekly-analysis.job';
+import { startRunnerTendencyJob } from './jobs/runner-tendency.job';
+import { startCoachingResponseJob } from './jobs/coaching-response.job';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -26,13 +29,28 @@ app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Health check endpoint
+// Telemetry tracking (must be before routes)
+app.use(telemetryMiddleware);
+app.use(sessionTrackingMiddleware);
+
+// Health check endpoint (unversioned - standard practice)
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// API routes
-app.use('/api', routes);
+// Backward compatibility redirect for Strava OAuth callback
+// This allows the old /api/auth/callback URL to work while Strava app settings are updated
+app.get('/api/auth/callback', (req, res) => {
+  const queryString = new URLSearchParams(req.query as any).toString();
+  res.redirect(301, `/api/v1/auth/callback?${queryString}`);
+});
+
+app.get('/api/auth/strava', (_req, res) => {
+  res.redirect(301, '/api/v1/auth/strava');
+});
+
+// API routes (v1)
+app.use('/api/v1', routes);
 
 // Error handler (must be last)
 app.use(errorHandler);
@@ -55,11 +73,13 @@ async function startServer() {
     // Start listening
     app.listen(PORT, () => {
       console.log(`✓ Server running on http://localhost:${PORT}`);
-      console.log(`✓ API available at http://localhost:${PORT}/api`);
+      console.log(`✓ API v1 available at http://localhost:${PORT}/api/v1`);
       console.log(`✓ Frontend URL: ${process.env.FRONTEND_URL}`);
 
-      // Start weekly analysis cron job
+      // Start scheduled jobs
       startWeeklyAnalysisJob();
+      startRunnerTendencyJob();  // Phase 2: Bi-weekly tendency analysis
+      startCoachingResponseJob(); // Phase 2: Daily coaching effectiveness follow-up
     });
   } catch (error) {
     console.error('Failed to start server:', error);

@@ -8,7 +8,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { notificationsAPI } from '../services/api';
-import { Bell, Check, X } from 'lucide-react';
+import { Bell, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
@@ -32,10 +32,16 @@ export default function NotificationBell() {
   const { data: countData } = useQuery({
     queryKey: ['notifications', 'count'],
     queryFn: async () => {
-      const response = await notificationsAPI.getUnreadCount();
-      return response.data;
+      try {
+        const response = await notificationsAPI.getUnreadCount();
+        return response.data;
+      } catch (error) {
+        console.error('Failed to fetch notification count:', error);
+        return { count: 0 };
+      }
     },
-    refetchInterval: 30000, // Refetch every 30 seconds
+    refetchInterval: 60000, // Refetch every 60 seconds (reduced from 30)
+    retry: false, // Don't retry on failure
   });
 
   // Fetch unread notifications (only when dropdown is open)
@@ -80,6 +86,7 @@ export default function NotificationBell() {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
+    return undefined;
   }, [isOpen]);
 
   const handleNotificationClick = async (notification: Notification) => {

@@ -17,7 +17,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    checkAuth();
+    // Only check auth once on mount
+    let mounted = true;
+
+    const initAuth = async () => {
+      const token = localStorage.getItem('jwt');
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const response = await authAPI.getCurrentUser();
+        if (mounted) {
+          setUser(response.data.user);
+        }
+      } catch (error) {
+        console.error('Auth check failed:', error);
+        if (mounted) {
+          localStorage.removeItem('jwt');
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    initAuth();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const checkAuth = async () => {

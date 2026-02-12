@@ -6,7 +6,7 @@
  */
 
 import cron from 'node-cron';
-import { performWeeklyAnalysisForAllUsers } from '../services/weeklyAnalysisService';
+import { performWeeklyAnalysisForAllUsers } from '../services/weekly-analysis.service';
 
 /**
  * Schedule: Every Monday at 6:00 AM
@@ -54,7 +54,6 @@ export function startWeeklyAnalysisJob() {
       }
     },
     {
-      scheduled: true,
       timezone: 'America/New_York', // Adjust to your timezone
     }
   );

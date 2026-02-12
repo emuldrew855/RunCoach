@@ -1,18 +1,22 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { profileAPI, goalsAPI } from '../services/api';
-import { UserProfile, Goal } from '../types';
+import { UserProfile, Goal, PersonalBests } from '../types';
 import toast from 'react-hot-toast';
 import { Save, Target, Edit as EditIcon } from 'lucide-react';
 import { usePreferences } from '../context/PreferencesContext';
+import CoachStyleSelector, { CoachStyle, CommunicationStyle } from '../components/CoachStyleSelector';
+import RaceHistoryManager from '../components/RaceHistoryManager';
+import { MemoryViewer } from '../components/MemoryViewer';
+import { PersonalBestsEditor } from '../components/PersonalBestsEditor';
 
 export default function ProfilePage() {
   const queryClient = useQueryClient();
-  const { preferences, updatePreferences } = usePreferences();
+  const { preferences, updatePreferences, distanceUnit } = usePreferences();
   const [editingProfile, setEditingProfile] = useState(false);
   const [editingGoal, setEditingGoal] = useState(false);
 
-  const { data: profileData, refetch: refetchProfile } = useQuery({
+  const { data: profileData } = useQuery({
     queryKey: ['profile'],
     queryFn: async () => {
       const response = await profileAPI.getProfile();
@@ -20,7 +24,7 @@ export default function ProfilePage() {
     },
   });
 
-  const { data: goalsData, refetch: refetchGoals } = useQuery({
+  const { data: goalsData } = useQuery({
     queryKey: ['goals'],
     queryFn: async () => {
       const response = await goalsAPI.getGoals();
@@ -99,6 +103,17 @@ export default function ProfilePage() {
     };
   };
 
+  const handleSavePersonalBests = async (bests: PersonalBests) => {
+    try {
+      await profileAPI.updateProfile({ personal_bests: bests });
+      toast.success('Personal bests updated successfully');
+      queryClient.invalidateQueries({ queryKey: ['profile'] });
+    } catch (error) {
+      toast.error('Failed to update personal bests');
+      throw error;
+    }
+  };
+
   const timeComponents = formatTimeForDisplay(goalForm.target_time_seconds);
 
   const activeGoal = goalsData?.find((g) => g.is_active);
@@ -135,6 +150,20 @@ export default function ProfilePage() {
                 />
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Gender</label>
+                <select
+                  value={profileForm.gender || ''}
+                  onChange={(e) => setProfileForm({ ...profileForm, gender: e.target.value })}
+                  className="input"
+                >
+                  <option value="">Select gender</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="non-binary">Non-binary</option>
+                  <option value="prefer-not-to-say">Prefer not to say</option>
+                </select>
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Weight (kg)</label>
                 <input
                   type="number"
@@ -153,7 +182,7 @@ export default function ProfilePage() {
                   className="input"
                 />
               </div>
-              <div>
+              <div className="col-span-2">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Running Experience (years)</label>
                 <input
                   type="number"
@@ -194,6 +223,12 @@ export default function ProfilePage() {
               <p className="font-semibold text-gray-900 dark:text-gray-100">{profileData.age || 'Not set'}</p>
             </div>
             <div>
+              <p className="text-gray-600 dark:text-gray-400">Gender</p>
+              <p className="font-semibold text-gray-900 dark:text-gray-100 capitalize">
+                {profileData.gender?.replace('-', ' ') || 'Not set'}
+              </p>
+            </div>
+            <div>
               <p className="text-gray-600 dark:text-gray-400">Weight</p>
               <p className="font-semibold text-gray-900 dark:text-gray-100">{profileData.weight_kg ? `${profileData.weight_kg} kg` : 'Not set'}</p>
             </div>
@@ -205,7 +240,7 @@ export default function ProfilePage() {
               <p className="text-gray-600 dark:text-gray-400">Experience</p>
               <p className="font-semibold text-gray-900 dark:text-gray-100">{profileData.running_experience_years ? `${profileData.running_experience_years} years` : 'Not set'}</p>
             </div>
-            <div className="col-span-2">
+            <div>
               <p className="text-gray-600 dark:text-gray-400">Typical Weekly Mileage</p>
               <p className="font-semibold text-gray-900 dark:text-gray-100">{profileData.typical_weekly_mileage ? `${profileData.typical_weekly_mileage} km` : 'Not set'}</p>
             </div>
@@ -213,6 +248,47 @@ export default function ProfilePage() {
         ) : (
           <p className="text-gray-600 dark:text-gray-400">No profile data yet. Click "Edit" to add your information.</p>
         )}
+      </div>
+
+      {/* Personal Bests Section */}
+      <PersonalBestsEditor
+        personalBests={profileData?.personal_bests || {}}
+        onSave={handleSavePersonalBests}
+        distanceUnit={distanceUnit as 'km' | 'mi'}
+      />
+
+      {/* Race History Section */}
+      <div className="card">
+        <RaceHistoryManager />
+      </div>
+
+      {/* Memory Viewer Section - Phase 3: RAG + Vector Search */}
+      <MemoryViewer />
+
+      {/* Coach Style Section */}
+      <div className="card">
+        <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-6">Your Coach's Personality</h2>
+        <p className="text-gray-600 dark:text-gray-400 mb-6">
+          Customize how your AI coach interacts with you. Choose a personality that motivates you best!
+        </p>
+
+        <CoachStyleSelector
+          coachStyle={(profileData?.coach_style || 'supportive') as CoachStyle}
+          strictnessLevel={profileData?.coach_strictness_level || 3}
+          communicationStyle={(profileData?.coach_communication_style || 'balanced') as CommunicationStyle}
+          onCoachStyleChange={(style) => {
+            updateProfileMutation.mutate({ coach_style: style });
+            toast.success(`Coach style updated to ${style}`);
+          }}
+          onStrictnessChange={(level) => {
+            updateProfileMutation.mutate({ coach_strictness_level: level });
+            toast.success(`Accountability level updated to ${level}`);
+          }}
+          onCommunicationStyleChange={(style) => {
+            updateProfileMutation.mutate({ coach_communication_style: style });
+            toast.success(`Communication style updated to ${style}`);
+          }}
+        />
       </div>
 
       {/* Preferences Section */}

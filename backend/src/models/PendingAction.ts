@@ -27,6 +27,29 @@ export interface PendingAction {
 }
 
 /**
+ * Create a new pending action
+ */
+export async function createPendingAction(
+  action: Omit<PendingAction, 'id' | 'created_at' | 'updated_at' | 'status'>
+): Promise<PendingAction> {
+  const result = await query(
+    `INSERT INTO pending_actions (
+      user_id, conversation_id, message_id, action_type, action_payload, agent_reasoning
+    ) VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING *`,
+    [
+      action.user_id,
+      action.conversation_id,
+      action.message_id || null,
+      action.action_type,
+      JSON.stringify(action.action_payload),
+      action.agent_reasoning || null,
+    ]
+  );
+  return result.rows[0];
+}
+
+/**
  * Get pending action by ID
  */
 export async function getPendingActionById(id: string): Promise<PendingAction | null> {

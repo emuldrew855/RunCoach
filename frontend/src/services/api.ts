@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1';
 
 const api = axios.create({
   baseURL: API_URL,
@@ -23,8 +23,11 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401 || error.response?.status === 403) {
-      localStorage.removeItem('jwt');
-      window.location.href = '/';
+      // Only redirect if we're not already on the login page
+      if (window.location.pathname !== '/') {
+        localStorage.removeItem('jwt');
+        window.location.href = '/';
+      }
     }
     return Promise.reject(error);
   }
@@ -47,6 +50,8 @@ export const activitiesAPI = {
   syncActivities: () => api.post('/activities/sync'),
   getStats: (days?: number) => api.get('/activities/stats', { params: { days } }),
   getHRZones: (days?: number) => api.get('/activities/hr-zones', { params: { days } }),
+  getWeeklyVolume: (params?: { weeks?: number; includePlanned?: boolean; futureWeeks?: number; weekStartsOn?: 'sunday' | 'monday' }) =>
+    api.get('/activities/weekly-volume', { params }),
 };
 
 // Profile API
@@ -77,6 +82,12 @@ export const chatAPI = {
       responseType: 'stream',
       adapter: 'fetch',
     }),
+  // Pending actions
+  getPendingActions: () => api.get('/agent/actions/pending'),
+  getPendingActionsCount: () => api.get('/agent/actions/count'),
+  approveAction: (actionId: string) => api.post(`/agent/actions/${actionId}/approve`),
+  rejectAction: (actionId: string, reason?: string) =>
+    api.post(`/agent/actions/${actionId}/reject`, { reason }),
 };
 
 // Training Plan API
@@ -120,4 +131,24 @@ export const notificationsAPI = {
   markAsRead: (notificationId: number) => api.post(`/notifications/${notificationId}/read`),
   markAllAsRead: () => api.post('/notifications/read-all'),
   deleteNotification: (notificationId: number) => api.delete(`/notifications/${notificationId}`),
+};
+
+// Race History API
+export const raceHistoryAPI = {
+  getRaceHistory: () => api.get('/races/history'),
+  getRace: (id: number) => api.get(`/races/history/${id}`),
+  createRace: (data: any) => api.post('/races/history', data),
+  updateRace: (id: number, data: any) => api.put(`/races/history/${id}`, data),
+  deleteRace: (id: number) => api.delete(`/races/history/${id}`),
+  getPersonalBests: () => api.get('/races/personal-bests'),
+};
+
+// Memory API (Phase 3: RAG + Vector Search)
+export const memoryAPI = {
+  getInsights: () => api.get('/memories/insights'),
+  getPatterns: (category?: string) =>
+    api.get('/memories/patterns', { params: category ? { category } : {} }),
+  getSummaries: () => api.get('/memories/summaries'),
+  getStats: () => api.get('/memories/stats'),
+  consolidate: () => api.post('/memories/consolidate'),
 };

@@ -5,6 +5,9 @@ import { getActivitiesAfterDate, getActivityStats } from '../models/Activity';
 import { getActivePlan } from '../models/TrainingPlan';
 import { getUpcomingWorkouts, getPlannedWorkoutsByDateRange } from '../models/PlannedWorkout';
 import { getHRZoneSummary } from '../models/ActivityHRZone';
+import { retrieveRelevantMemories, type LongTermMemory } from '../services/memoryRetrievalService';
+import { DailyRunInsight, WeeklyInsight, RunnerTendency } from '../types/insights';
+import pool from '../config/database';
 
 export interface UserContextData {
   firstName: string;
@@ -19,6 +22,7 @@ export interface UserContextData {
     totalWeeks?: number;
   } | null;
   upcomingWorkouts?: Array<{
+    id: number;  // Added workout ID
     date: Date;
     type: string;
     name?: string;
@@ -26,6 +30,7 @@ export interface UserContextData {
     targetDistance?: number;
     targetPace?: string;
     hrZone?: number;
+    weekLabel?: string;  // Added week label: 'this_week' | 'next_week' | 'week_3' | 'week_4'
   }>;
   lastWeekAdherence?: {
     planned: number;
@@ -69,9 +74,26 @@ export interface UserContextData {
     zone5Hours: number;
     totalHours: number;
   } | null;
+  sessionSummary?: {
+    trainingCycleWeek: number;
+    recentTrend: {
+      mileageDirection: string;
+      adherenceStatus: string;
+      intensityLevel: string;
+    };
+    keyContext: {
+      raceDateProximity: number;
+      trainingPhase: string;
+      recentConcerns: string | null;
+    };
+  };
+  longTermMemory?: LongTermMemory; // Phase 2: RAG-based semantic memory
+  dailyInsights?: DailyRunInsight[]; // NEW: Pre-computed daily insights (last 7 days)
+  weeklyInsight?: WeeklyInsight | null; // NEW: Latest weekly insight
+  runnerTendencies?: RunnerTendency[]; // NEW Phase 2: Behavioral patterns over 4-6 weeks
 }
 
-export async function buildUserContext(userId: number): Promise<UserContextData> {
+export async function buildUserContext(userId: number, userQuery?: string): Promise<UserContextData> {
   const user = await getUserById(userId);
   const profile = await getProfileByUserId(userId);
   const activeGoal = await getActiveGoal(userId);
@@ -85,7 +107,8 @@ export async function buildUserContext(userId: number): Promise<UserContextData>
   // Get active training plan
   const activePlan = await getActivePlan(userId);
 
-  // Get upcoming workouts (next 28 days for 4 weeks lookahead)
+  // Get upcoming workouts (next 7 days for immediate schedule, then 28 days for 4 weeks lookahead)
+  const next7DaysWorkouts = activePlan ? await getUpcomingWorkouts(userId, 7) : [];
   const upcomingWorkouts = activePlan ? await getUpcomingWorkouts(userId, 28) : [];
 
   // Get last week's planned vs actual
@@ -104,6 +127,13 @@ export async function buildUserContext(userId: number): Promise<UserContextData>
 
   // Get HR zone distribution
   const hrZoneSummary = await getHRZoneSummary(userId, 30);
+
+  // NEW: Fetch daily insights (last 7 days) and weekly insight
+  const dailyInsights = await getDailyInsights(userId, 7);
+  const weeklyInsight = await getLatestWeeklyInsight(userId);
+
+  // NEW Phase 2: Fetch runner tendencies (behavioral patterns)
+  const runnerTendencies = await getRunnerTendencies(userId);
 
   // Calculate this week's plan
   const startOfWeek = new Date();
@@ -132,6 +162,63 @@ export async function buildUserContext(userId: number): Promise<UserContextData>
       .filter(w => w.completion_status === 'completed')
       .reduce((sum, w) => sum + (w.target_distance_meters ? parseFloat(String(w.target_distance_meters)) / 1000 : 0), 0),
   } : undefined;
+
+  // Get this week's completed activities
+  const thisWeekActivities = recentActivities.filter(a => {
+    const activityDate = new Date(a.start_date);
+    return activityDate >= startOfWeek && activityDate < new Date();
+  });
+
+  // Calculate detailed performance metrics for this week
+  const paces = thisWeekActivities
+    .filter(a => a.average_speed && parseFloat(String(a.average_speed)) > 0)
+    .map(a => 1000 / (parseFloat(String(a.average_speed)) * 60));
+
+  const avgPaceThisWeek = paces.length > 0
+    ? paces.reduce((sum, p) => sum + p, 0) / paces.length
+    : undefined;
+
+  const heartRates = thisWeekActivities
+    .filter(a => a.average_heartrate)
+    .map(a => parseFloat(String(a.average_heartrate)));
+
+  const avgHRThisWeek = heartRates.length > 0
+    ? Math.round(heartRates.reduce((sum, hr) => sum + hr, 0) / heartRates.length)
+    : undefined;
+
+  const thisWeekCompletedSummary = {
+    activities: thisWeekActivities.map(a => ({
+      date: a.start_date,
+      name: a.name,
+      distance: a.distance_meters ? parseFloat(String(a.distance_meters)) / 1000 : 0,
+      duration: a.moving_time_seconds,
+      pace: a.average_speed ? 1000 / (parseFloat(String(a.average_speed)) * 60) : undefined,
+      avgHR: a.average_heartrate ? Math.round(parseFloat(String(a.average_heartrate))) : undefined,
+      maxHR: a.max_heartrate ? Math.round(parseFloat(String(a.max_heartrate))) : undefined,
+      elevationGain: a.total_elevation_gain_meters,
+    })),
+    totalDistance: thisWeekActivities.reduce((sum, a) =>
+      sum + (a.distance_meters ? parseFloat(String(a.distance_meters)) / 1000 : 0), 0
+    ),
+    totalDuration: thisWeekActivities.reduce((sum, a) =>
+      sum + (a.moving_time_seconds ? parseFloat(String(a.moving_time_seconds)) : 0), 0
+    ),
+    workoutCount: thisWeekActivities.length,
+    averagePace: avgPaceThisWeek,
+    averageHeartRate: avgHRThisWeek,
+    // Calculate actual adherence: compare activities vs planned workouts
+    adherence: thisWeekWorkouts.length > 0 ? {
+      plannedWorkouts: thisWeekWorkouts.length,
+      completedActivities: thisWeekActivities.length,
+      plannedDistance: thisWeekWorkouts.reduce((sum, w) =>
+        sum + (w.target_distance_meters ? parseFloat(String(w.target_distance_meters)) / 1000 : 0), 0
+      ),
+      actualDistance: thisWeekActivities.reduce((sum, a) =>
+        sum + (a.distance_meters ? parseFloat(String(a.distance_meters)) / 1000 : 0), 0
+      ),
+      adherenceRate: Math.round((thisWeekActivities.length / thisWeekWorkouts.length) * 100),
+    } : undefined,
+  };
 
   // Calculate next 4 weeks planned distances
   const nextFourWeeks = [];
@@ -216,19 +303,38 @@ export async function buildUserContext(userId: number): Promise<UserContextData>
       totalWeeks: activePlan.total_weeks,
     } : null,
 
-    upcomingWorkouts: upcomingWorkouts.slice(0, 7).map(w => ({
-      date: w.scheduled_date,
-      type: w.workout_type,
-      name: w.name,
-      description: w.description,
-      targetDistance: w.target_distance_meters ? w.target_distance_meters / 1000 : undefined,
-      targetPace: w.target_pace_min && w.target_pace_max
-        ? `${formatPace(w.target_pace_min)}-${formatPace(w.target_pace_max)}`
-        : undefined,
-      hrZone: w.target_hr_zone,
-    })),
+    // Show ALL workouts in next 28 days with explicit week labels
+    upcomingWorkouts: upcomingWorkouts.map(w => {
+      const workoutDate = new Date(w.scheduled_date);
+      let weekLabel = 'future';
+
+      // Determine which week this workout belongs to
+      if (workoutDate >= startOfWeek && workoutDate < endOfWeek) {
+        weekLabel = 'this_week';
+      } else if (workoutDate >= endOfWeek) {
+        const weeksFromNow = Math.floor((workoutDate.getTime() - endOfWeek.getTime()) / (7 * 24 * 60 * 60 * 1000));
+        if (weeksFromNow === 0) weekLabel = 'next_week';
+        else if (weeksFromNow === 1) weekLabel = 'week_3';
+        else if (weeksFromNow === 2) weekLabel = 'week_4';
+      }
+
+      return {
+        id: w.id,  // CRITICAL: workout ID for tools
+        date: w.scheduled_date,
+        type: w.workout_type,
+        name: w.name,
+        description: w.description,
+        targetDistance: w.target_distance_meters ? w.target_distance_meters / 1000 : undefined,
+        targetPace: w.target_pace_min && w.target_pace_max
+          ? `${formatPace(w.target_pace_min)}-${formatPace(w.target_pace_max)}`
+          : undefined,
+        hrZone: w.target_hr_zone,
+        weekLabel,  // NEW: explicit week grouping
+      };
+    }),
 
     thisWeekPlan,
+    thisWeekCompleted: thisWeekCompletedSummary,
 
     nextFourWeeksPlan: nextFourWeeks.length === 4 ? {
       week1Distance: nextFourWeeks[0],
@@ -266,7 +372,112 @@ export async function buildUserContext(userId: number): Promise<UserContextData>
         parseFloat(String(hrZoneSummary.total_zone_5 || 0))
       ) / 3600,
     } : null,
+
+    // Session Summary (medium-term memory)
+    sessionSummary: {
+      trainingCycleWeek: calculateCurrentWeek(activePlan?.start_date),
+      recentTrend: {
+        mileageDirection: calculateMileageTrend(nextFourWeeks),
+        adherenceStatus: calculateAdherenceStatus(lastFourWeeksAdherence),
+        intensityLevel: calculateIntensityFromHR(hrZoneSummary && {
+          zone1Hours: parseFloat(String(hrZoneSummary.total_zone_1 || 0)) / 3600,
+          zone2Hours: parseFloat(String(hrZoneSummary.total_zone_2 || 0)) / 3600,
+          zone3Hours: parseFloat(String(hrZoneSummary.total_zone_3 || 0)) / 3600,
+          zone4Hours: parseFloat(String(hrZoneSummary.total_zone_4 || 0)) / 3600,
+          zone5Hours: parseFloat(String(hrZoneSummary.total_zone_5 || 0)) / 3600,
+          totalHours: (
+            parseFloat(String(hrZoneSummary.total_zone_1 || 0)) +
+            parseFloat(String(hrZoneSummary.total_zone_2 || 0)) +
+            parseFloat(String(hrZoneSummary.total_zone_3 || 0)) +
+            parseFloat(String(hrZoneSummary.total_zone_4 || 0)) +
+            parseFloat(String(hrZoneSummary.total_zone_5 || 0))
+          ) / 3600,
+        }),
+      },
+      keyContext: {
+        raceDateProximity: calculateDaysRemaining(activeGoal?.target_date),
+        trainingPhase: determineTrainingPhase(activePlan, activeGoal),
+        recentConcerns: extractRecentConcerns(recentActivities),
+      },
+    },
+
+    // Long-Term Memory (Phase 2: RAG-based semantic memory)
+    longTermMemory: userQuery ? await retrieveRelevantMemories(userId, userQuery, 5) : undefined,
+
+    // NEW: Pre-computed insights for specific coaching feedback
+    dailyInsights,
+    weeklyInsight,
+
+    // NEW Phase 2: Behavioral patterns for historical coaching
+    runnerTendencies,
   };
+}
+
+/**
+ * Helper functions for session summary (medium-term memory)
+ */
+
+function calculateCurrentWeek(planStartDate?: Date): number {
+  if (!planStartDate) return 0;
+  const start = new Date(planStartDate);
+  const now = new Date();
+  const diffTime = Math.abs(now.getTime() - start.getTime());
+  const diffWeeks = Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 7));
+  return diffWeeks;
+}
+
+function calculateMileageTrend(weeksData: number[]): string {
+  if (!weeksData || weeksData.length < 2) return 'stable';
+  const recent = weeksData[weeksData.length - 1];
+  const previous = weeksData[weeksData.length - 2];
+  if (recent > previous * 1.1) return 'increasing (+10%+ from last week)';
+  if (recent < previous * 0.9) return 'decreasing (>10% from last week)';
+  return 'stable';
+}
+
+function calculateAdherenceStatus(adherenceData: any): string {
+  if (!adherenceData) return 'unknown';
+  const rate = adherenceData.adherenceRate || 0;
+  if (rate >= 90) return 'excellent (90%+)';
+  if (rate >= 75) return 'good (75-90%)';
+  if (rate >= 60) return 'moderate (60-75%)';
+  return 'concerning (<60%)';
+}
+
+function calculateIntensityFromHR(hrData: any): string {
+  if (!hrData || hrData.totalHours === 0) return 'unknown';
+  const zone4_5_hours = hrData.zone4Hours + hrData.zone5Hours;
+  const zone4_5_percent = (zone4_5_hours / hrData.totalHours) * 100;
+  if (zone4_5_percent > 25) return 'high (25%+ in zones 4-5)';
+  if (zone4_5_percent > 15) return 'moderate (15-25% in zones 4-5)';
+  return 'low (mostly easy paced)';
+}
+
+function determineTrainingPhase(plan: any, goal: any): string {
+  if (!plan || !goal) return 'unstructured training';
+  const daysUntilRace = calculateDaysRemaining(goal.target_date);
+  if (daysUntilRace < 14) return 'taper';
+  if (daysUntilRace < 28) return 'peak';
+  if (daysUntilRace < 56) return 'build';
+  return 'base building';
+}
+
+function extractRecentConcerns(activities: any[]): string | null {
+  if (!activities || activities.length === 0) return null;
+  const recentActivity = activities[0];
+  if (recentActivity.perceived_exertion && recentActivity.perceived_exertion >= 8) {
+    return 'High perceived exertion in recent runs';
+  }
+  return null;
+}
+
+function calculateDaysRemaining(targetDate?: Date): number {
+  if (!targetDate) return 0;
+  const target = new Date(targetDate);
+  const now = new Date();
+  const diffTime = target.getTime() - now.getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays > 0 ? diffDays : 0;
 }
 
 function formatTime(seconds?: number): string {
@@ -300,6 +511,99 @@ function calculateCurrentWeek(startDate: Date): number {
   return Math.floor(diff / (7 * 24 * 60 * 60 * 1000)) + 1;
 }
 
+/**
+ * Fetch daily insights for the last N days
+ */
+async function getDailyInsights(userId: number, days: number = 7): Promise<DailyRunInsight[]> {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM daily_run_insights
+       WHERE user_id = $1
+       ORDER BY run_date DESC
+       LIMIT $2`,
+      [userId, days]
+    );
+
+    return result.rows.map(row => ({
+      activityId: row.activity_id,
+      userId: row.user_id,
+      runDate: row.run_date,
+      pacing: row.pacing_analysis,
+      hrBehavior: row.hr_behavior,
+      effort: row.effort_analysis,
+      compliance: row.compliance_check,
+      risks: row.risk_indicators,
+      coachingPoints: row.coaching_points
+    }));
+  } catch (error) {
+    console.warn('Failed to fetch daily insights:', error);
+    return [];
+  }
+}
+
+/**
+ * Fetch the latest weekly insight
+ */
+async function getLatestWeeklyInsight(userId: number): Promise<WeeklyInsight | null> {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM weekly_insights
+       WHERE user_id = $1
+       ORDER BY week_start DESC
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    return {
+      userId: row.user_id,
+      weekStart: row.week_start,
+      weekEnd: row.week_end,
+      volume: row.volume_analysis,
+      adherence: row.adherence_tracking,
+      patterns: row.pattern_changes,
+      trainingLoad: row.training_load,
+      weeklyRisks: row.weekly_risks,
+      nextWeekGuidance: row.next_week_guidance
+    };
+  } catch (error) {
+    console.warn('Failed to fetch weekly insight:', error);
+    return null;
+  }
+}
+
+/**
+ * Fetch runner tendencies (behavioral patterns)
+ */
+async function getRunnerTendencies(userId: number): Promise<RunnerTendency[]> {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM runner_tendencies
+       WHERE user_id = $1
+       ORDER BY updated_at DESC`,
+      [userId]
+    );
+
+    return result.rows.map(row => ({
+      userId: row.user_id,
+      tendencyType: row.tendency_type,
+      pacingBehavior: row.pacing_behavior,
+      hrManagement: row.hr_management,
+      volumeBehavior: row.volume_behavior,
+      complianceBehavior: row.compliance_behavior,
+      observationStart: row.observation_start,
+      observationEnd: row.observation_end,
+      activitiesAnalyzed: row.activities_analyzed,
+      confidenceScore: parseFloat(row.confidence_score || '0')
+    }));
+  } catch (error) {
+    console.warn('Failed to fetch runner tendencies:', error);
+    return [];
+  }
+}
+
 export function buildSystemPrompt(userData: UserContextData): string {
   const zone1_2_percent = userData.hrZoneDistribution
     ? ((userData.hrZoneDistribution.zone1Hours + userData.hrZoneDistribution.zone2Hours) /
@@ -307,6 +611,27 @@ export function buildSystemPrompt(userData: UserContextData): string {
     : 0;
 
   return `You are an expert running coach assistant helping ${userData.firstName}.
+
+# ⚠️ CRITICAL: DATA ACCURACY REQUIREMENTS
+
+**ABSOLUTELY REQUIRED:**
+1. **ONLY use data explicitly provided in this context** - Never make up workout details, dates, or schedules
+2. **If information is not in the context, say "I don't have that information"** - Don't guess or infer
+3. **For workout schedules, ONLY reference workouts listed in "Next 7 Days Detailed Schedule"** - These are the EXACT workouts from the database
+4. **Never hallucinate workout details** - If a workout doesn't have pace/distance/HR zone listed, don't add it
+5. **Dates must match exactly** - Don't shift or adjust dates unless explicitly using the tools provided
+6. **When describing future workouts, copy the details VERBATIM** from the schedule below
+
+**Examples of what NOT to do:**
+❌ "Your long run on Sunday is 20km" (when the schedule shows 18km)
+❌ "You have threshold intervals tomorrow" (when tomorrow shows an easy run)
+❌ Adding pace targets that aren't in the workout description
+❌ Assuming rest days that aren't explicitly scheduled
+
+**What TO do:**
+✅ "According to your schedule, [exact date] shows: [exact workout name] - [exact distance] [exact pace if provided]"
+✅ "I can see you have [X] workouts in the next 7 days based on your plan"
+✅ "Your schedule doesn't show a workout for that date"
 
 # Athlete Profile
 ${userData.profile.age ? `- Age: ${userData.profile.age}` : ''}
@@ -345,10 +670,12 @@ ${userData.nextFourWeeksPlan ? `# Upcoming Training Load (Next 4 Weeks)
 - Week 3: ${userData.nextFourWeeksPlan.week3Distance.toFixed(1)} km
 - Week 4: ${userData.nextFourWeeksPlan.week4Distance.toFixed(1)} km` : ''}
 
-${userData.upcomingWorkouts && userData.upcomingWorkouts.length > 0 ? `# Next 7 Days Detailed Schedule
+${userData.upcomingWorkouts && userData.upcomingWorkouts.length > 0 ? `# Next 7 Days Detailed Schedule (EXACT DATA - DO NOT MODIFY)
 ${userData.upcomingWorkouts.map(w =>
-  `- ${formatDate(w.date)}: ${w.name || w.type} ${w.targetDistance ? `- ${w.targetDistance.toFixed(1)}km` : ''} ${w.targetPace ? `at ${w.targetPace}` : ''} ${w.hrZone ? `(Zone ${w.hrZone})` : ''}`
-).join('\n')}` : ''}
+  `- ${formatDate(w.date)}: ${w.name || w.type}${w.targetDistance ? ` - ${w.targetDistance.toFixed(1)}km` : ''}${w.targetPace ? ` at ${w.targetPace}` : ''}${w.hrZone ? ` (Zone ${w.hrZone})` : ''}${w.description ? `\n  Details: ${w.description}` : ''}`
+).join('\n')}
+
+⚠️ This is the COMPLETE list of workouts for the next 7 days. If a date is missing, there is NO workout scheduled for that day.` : '# Next 7 Days Detailed Schedule\n⚠️ No workouts currently scheduled for the next 7 days.'}
 
 # Recent Training Summary (Last 30 Days)
 - Total Runs: ${userData.recentStats.totalRuns}
@@ -417,14 +744,16 @@ You are an expert running coach who provides:
 - Encourage consistency when adherence drops
 
 # Guidelines
-- **Be Specific:** Reference actual workout names, dates, and metrics
+- **DATA ACCURACY IS PARAMOUNT:** Never deviate from the provided schedule data
+- **Be Specific:** Reference actual workout names, dates, and metrics FROM THE SCHEDULE ABOVE
 - **Compare Plan vs Actual:** "Your Tuesday tempo run was planned for 10km at 4:45/km, but you ran 4:38/km - excellent pacing!"
-- **Look Forward:** "Your long run this Sunday is 22km - based on last week's 18km, that's appropriate progression"
+- **Look Forward:** Only reference workouts explicitly listed in "Next 7 Days Detailed Schedule"
 - **Context Aware:** Consider goal date, injury history, HR zones, adherence rate
-- **Actionable Advice:** Don't just analyze - suggest concrete adjustments
+- **Actionable Advice:** Don't just analyze - suggest concrete adjustments using available tools
 - **Supportive but Honest:** Celebrate successes, but flag concerns directly
 - **Use Metric Units:** km, kg, min/km, bpm
 - **HR Zone Specific:** Zone 1 (<120), Zone 2 (120-140), Zone 3 (140-160), Zone 4 (160-175), Zone 5 (>175)
+- **When asked about schedule:** Copy the workout details EXACTLY as shown in "Next 7 Days Detailed Schedule"
 
 # Example Interactions
 **Check-in after a run:** "Great job completing yesterday's easy 8km! I see you kept it in Zone 2 (avg 135 bpm) as planned. Your Wednesday tempo run is coming up - 12km with 6km at threshold pace. Ready to discuss pacing strategy?"
@@ -433,9 +762,13 @@ You are an expert running coach who provides:
 
 **Goal progress:** "You're ${userData.goalProgress?.weeksRemaining} weeks from race day. Your current weekly average (${userData.goalProgress?.currentAvgWeeklyMileage.toFixed(1)}km) is ${userData.goalProgress?.onTrack ? 'right on track!' : `below the target ${userData.goalProgress?.avgWeeklyMileageNeeded.toFixed(1)}km needed for sub-3hr marathon. Let's discuss how to safely build up.`}"
 
-# Important
+# ⚠️ CRITICAL REMINDERS
+- **NEVER make up workout details** - Only use what's in "Next 7 Days Detailed Schedule"
+- **NEVER adjust dates or distances** without being asked and using tools
+- **NEVER add information that isn't in the context** (e.g., don't add pace targets if not specified)
 - Refer to THIS WEEK'S PLAN and NEXT 4 WEEKS when giving advice
 - Use Goal Progress data to keep athlete motivated and on track
 - Flag adherence issues proactively
-- Suggest workout modifications when HR data shows overtraining`;
+- Suggest workout modifications when HR data shows overtraining
+- **When describing the schedule, be LITERAL and EXACT** - copy from "Next 7 Days Detailed Schedule"`;
 }

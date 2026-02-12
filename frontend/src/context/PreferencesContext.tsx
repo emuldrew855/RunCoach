@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { profileAPI } from '../services/api';
+import { ChartPreferences } from '../types';
 
 interface Preferences {
   units: 'metric' | 'imperial';
@@ -8,7 +9,9 @@ interface Preferences {
 
 interface PreferencesContextType {
   preferences: Preferences;
+  chartPreferences: ChartPreferences;
   updatePreferences: (prefs: Partial<Preferences>) => Promise<void>;
+  updateChartPreferences: (prefs: Partial<ChartPreferences>) => Promise<void>;
   convertDistance: (meters: number, decimals?: number) => string;
   distanceUnit: string;
   convertPace: (minPerKm: number) => string;
@@ -21,6 +24,14 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
   const [preferences, setPreferences] = useState<Preferences>({
     units: 'metric',
     weekStartsOn: 'sunday',
+  });
+
+  const [chartPreferences, setChartPreferences] = useState<ChartPreferences>({
+    historicalWeeks: 16,
+    futureWeeks: 4,
+    chartType: 'bar',
+    dataView: 'both',
+    showAverage: true,
   });
 
   useEffect(() => {
@@ -36,6 +47,9 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
           units: profile.preferred_units || 'metric',
           weekStartsOn: profile.week_starts_on || 'sunday',
         });
+        if (profile.chart_preferences) {
+          setChartPreferences(profile.chart_preferences);
+        }
       }
     } catch (error) {
       console.error('Failed to load preferences:', error);
@@ -56,6 +70,21 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
       setPreferences((prev) => ({ ...prev, ...prefs }));
     } catch (error) {
       console.error('Failed to update preferences:', error);
+      throw error;
+    }
+  };
+
+  const updateChartPreferences = async (prefs: Partial<ChartPreferences>) => {
+    try {
+      const newChartPrefs = { ...chartPreferences, ...prefs };
+
+      await profileAPI.updateProfile({
+        chart_preferences: newChartPrefs,
+      });
+
+      setChartPreferences(newChartPrefs);
+    } catch (error) {
+      console.error('Failed to update chart preferences:', error);
       throw error;
     }
   };
@@ -88,7 +117,9 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
     <PreferencesContext.Provider
       value={{
         preferences,
+        chartPreferences,
         updatePreferences,
+        updateChartPreferences,
         convertDistance,
         distanceUnit,
         convertPace,

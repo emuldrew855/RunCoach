@@ -3,6 +3,7 @@ import { exchangeCodeForToken } from '../services/stravaService';
 import { upsertUser } from '../models/User';
 import { generateToken } from '../utils/jwt';
 import { stravaConfig } from '../config/strava';
+import { query } from '../config/database';
 
 export async function redirectToStrava(_req: Request, res: Response): Promise<void> {
   const authUrl = `${stravaConfig.authorizeUrl}?client_id=${stravaConfig.clientId}&redirect_uri=${stravaConfig.redirectUri}&response_type=code&scope=${stravaConfig.scopes}`;
@@ -55,8 +56,18 @@ export async function getCurrentUser(req: Request, res: Response): Promise<void>
       return;
     }
 
-    const { access_token, refresh_token, ...userWithoutTokens } = req.user;
-    res.json({ user: userWithoutTokens });
+    // req.user only has id and stravaId from JWT, fetch full user from database
+    const result = await query(
+      'SELECT id, strava_id, email, first_name, last_name, profile_picture_url, created_at, last_login_at, is_admin FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    res.json({ user: result.rows[0] });
   } catch (error) {
     console.error('Get current user error:', error);
     res.status(500).json({ error: 'Failed to get user' });

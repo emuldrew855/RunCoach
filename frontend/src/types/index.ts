@@ -45,6 +45,23 @@ export interface SplitData {
   pace_zone?: number;
 }
 
+export interface ChartPreferences {
+  historicalWeeks: number;
+  futureWeeks: number;
+  chartType: 'bar' | 'line';
+  dataView: 'both' | 'actual' | 'planned';
+  showAverage: boolean;
+}
+
+export interface PersonalBests {
+  '5k'?: number;
+  '10k'?: number;
+  '15k'?: number;
+  '30k'?: number;
+  'half_marathon'?: number;
+  'marathon'?: number;
+}
+
 export interface UserProfile {
   id?: number;
   user_id?: number;
@@ -60,6 +77,11 @@ export interface UserProfile {
   timezone?: string;
   training_block_start?: string;
   training_block_end?: string;
+  coach_style?: 'strict' | 'supportive' | 'analytical' | 'motivational';
+  coach_strictness_level?: number; // 1-5 scale
+  coach_communication_style?: 'casual' | 'balanced' | 'professional';
+  chart_preferences?: ChartPreferences;
+  personal_bests?: PersonalBests;
 }
 
 export interface Goal {
@@ -72,6 +94,24 @@ export interface Goal {
   race_location?: string;
   is_active: boolean;
   notes?: string;
+}
+
+export interface RaceHistory {
+  id?: number;
+  user_id?: number;
+  race_name: string;
+  race_date: string;
+  race_type: '5k' | '10k' | '15k' | 'half_marathon' | 'marathon' | 'ultra' | 'other';
+  finish_time_seconds: number;
+  race_location?: string;
+  race_notes?: string;
+  is_personal_best?: boolean;
+  placement?: number;
+  age_group_placement?: number;
+  weather_conditions?: string;
+  elevation_gain_meters?: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface Conversation {
@@ -90,4 +130,36 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
+}
+
+// Phase 3: RAG + Vector Search - Memory Types
+
+export interface UserInsights {
+  patterns: string[];
+  preferences: string[];
+  concerns: string[];
+  successes: string[];
+}
+
+export interface ActivityPattern {
+  pattern_text: string;
+  pattern_category: 'pacing' | 'hr_behavior' | 'recovery' | 'performance';
+  occurrence_count: number;
+  last_seen: string;
+  metadata?: any;
+}
+
+export interface ConversationSummary {
+  summary_text: string;
+  key_insights: string[];
+  topics: string[];
+  sentiment: 'positive' | 'neutral' | 'concerned';
+  created_at: string;
+}
+
+export interface MemoryStats {
+  insights: number;
+  patterns: number;
+  summaries: number;
+  conversation_memories: number;
 }

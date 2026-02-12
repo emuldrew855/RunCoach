@@ -14,8 +14,9 @@ export async function upsertProfile(profile: Partial<UserProfile> & { user_id: n
     `INSERT INTO user_profiles (
       user_id, age, weight_kg, height_cm, gender, running_experience_years,
       typical_weekly_mileage, injury_history, preferred_units, week_starts_on, timezone,
-      training_block_start, training_block_end
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      training_block_start, training_block_end, coach_style, coach_strictness_level, coach_communication_style,
+      chart_preferences, personal_bests
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
     ON CONFLICT (user_id)
     DO UPDATE SET
       age = COALESCE(EXCLUDED.age, user_profiles.age),
@@ -30,22 +31,32 @@ export async function upsertProfile(profile: Partial<UserProfile> & { user_id: n
       timezone = COALESCE(EXCLUDED.timezone, user_profiles.timezone),
       training_block_start = COALESCE(EXCLUDED.training_block_start, user_profiles.training_block_start),
       training_block_end = COALESCE(EXCLUDED.training_block_end, user_profiles.training_block_end),
+      coach_style = COALESCE(EXCLUDED.coach_style, user_profiles.coach_style),
+      coach_strictness_level = COALESCE(EXCLUDED.coach_strictness_level, user_profiles.coach_strictness_level),
+      coach_communication_style = COALESCE(EXCLUDED.coach_communication_style, user_profiles.coach_communication_style),
+      chart_preferences = COALESCE(EXCLUDED.chart_preferences, user_profiles.chart_preferences),
+      personal_bests = COALESCE(EXCLUDED.personal_bests, user_profiles.personal_bests),
       updated_at = NOW()
     RETURNING *`,
     [
       profile.user_id,
-      profile.age,
-      profile.weight_kg,
-      profile.height_cm,
-      profile.gender,
-      profile.running_experience_years,
-      profile.typical_weekly_mileage,
-      profile.injury_history,
-      profile.preferred_units || 'metric',
-      profile.week_starts_on || 'sunday',
-      profile.timezone || 'UTC',
-      profile.training_block_start,
-      profile.training_block_end,
+      profile.age ?? null,
+      profile.weight_kg ?? null,
+      profile.height_cm ?? null,
+      profile.gender ?? null,
+      profile.running_experience_years ?? null,
+      profile.typical_weekly_mileage ?? null,
+      profile.injury_history ?? null,
+      profile.preferred_units ?? 'metric',
+      profile.week_starts_on ?? 'sunday',
+      profile.timezone ?? 'UTC',
+      profile.training_block_start ?? null,
+      profile.training_block_end ?? null,
+      profile.coach_style ?? null,
+      profile.coach_strictness_level ?? null,
+      profile.coach_communication_style ?? null,
+      profile.chart_preferences ? JSON.stringify(profile.chart_preferences) : null,
+      profile.personal_bests ? JSON.stringify(profile.personal_bests) : null,
     ]
   );
   return result.rows[0];

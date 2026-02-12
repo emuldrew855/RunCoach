@@ -7,7 +7,12 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "migrate": "node -r dotenv/config scripts/migrate.js"
+    "migrate": "node -r dotenv/config scripts/migrate.js",
+    "make-admin": "ts-node src/scripts/makeAdmin.ts",
+    "backfill:conversations": "ts-node -r dotenv/config src/scripts/backfillConversationEmbeddings.ts",
+    "backfill:patterns": "ts-node -r dotenv/config src/scripts/backfillActivityPatterns.ts",
+    "backfill:all": "ts-node -r dotenv/config src/scripts/backfillAllMemories.ts",
+    "consolidate:memories": "ts-node -r dotenv/config src/scripts/consolidateMemories.ts"
   },
   "keywords": [
     "running",

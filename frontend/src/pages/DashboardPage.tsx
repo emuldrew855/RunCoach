@@ -8,15 +8,17 @@ import { RefreshCw, Calendar, Clock, Target, TrendingUp, Activity as ActivityIco
 import toast from 'react-hot-toast';
 import { AlertDashboard } from '../components/training/AlertDashboard';
 import { HRZoneChart } from '../components/training/HRZoneChart';
+import { TrainingVolumeChart, WeeklyVolumeData } from '../components/training/TrainingVolumeChart';
 import { usePreferences } from '../context/PreferencesContext';
 import { getRunningQuote } from '../utils/runningQuotes';
 import { CollapsibleCard } from '../components/CollapsibleCard';
 import { DashboardSettings, useDashboardVisibility } from '../components/DashboardSettings';
+import ErrorDisplay, { InlineError, LoadingDisplay } from '../components/ErrorDisplay';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { visibility, updateVisibility } = useDashboardVisibility();
-  const { convertDistance, distanceUnit, convertPace, paceUnit } = usePreferences();
+  const { preferences, chartPreferences, updateChartPreferences, convertDistance, distanceUnit, convertPace, paceUnit } = usePreferences();
   const [quote, setQuote] = React.useState(() => getRunningQuote());
 
   // Refresh quote every 3 hours
@@ -28,53 +30,84 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const { data: activitiesData, isLoading: activitiesLoading, refetch } = useQuery({
+  const { data: activitiesData, isLoading: activitiesLoading, error: activitiesError, refetch } = useQuery({
     queryKey: ['activities'],
     queryFn: async () => {
       const response = await activitiesAPI.getActivities({ limit: 10 });
       return response.data.activities as Activity[];
     },
+    retry: 2,
+    retryDelay: 1000,
   });
 
-  const { data: statsData, refetch: refetchStats } = useQuery({
+  const { data: statsData, error: statsError, refetch: refetchStats } = useQuery({
     queryKey: ['stats'],
     queryFn: async () => {
       const response = await activitiesAPI.getStats(30);
       return response.data.stats;
     },
+    retry: 2,
+    retryDelay: 1000,
   });
 
-  const { data: goalsData, refetch: refetchGoals } = useQuery({
+  const { data: goalsData, error: goalsError, refetch: refetchGoals } = useQuery({
     queryKey: ['goals'],
     queryFn: async () => {
       const response = await goalsAPI.getGoals();
       return response.data.goals as Goal[];
     },
+    retry: 2,
+    retryDelay: 1000,
   });
 
-  const { data: hrZonesData, refetch: refetchHRZones } = useQuery({
+  const { data: hrZonesData, error: hrZonesError, refetch: refetchHRZones } = useQuery({
     queryKey: ['hrZones'],
     queryFn: async () => {
       const response = await activitiesAPI.getHRZones(30);
       return response.data.hrZones;
     },
+    retry: 2,
+    retryDelay: 1000,
   });
 
-  const { data: upcomingWorkouts } = useQuery({
+  const { data: upcomingWorkouts, error: workoutsError } = useQuery({
     queryKey: ['upcomingWorkouts'],
     queryFn: async () => {
       const response = await trainingPlanAPI.getWorkouts({ days: 7 });
       return response.data.workouts || [];
     },
+    retry: 2,
+    retryDelay: 1000,
   });
 
-  const { data: profileData } = useQuery({
+  const { data: profileData, error: profileError } = useQuery({
     queryKey: ['profile'],
     queryFn: async () => {
       const response = await profileAPI.getProfile();
       return response.data.profile as UserProfile | null;
     },
+    retry: 2,
+    retryDelay: 1000,
   });
+
+  const { data: weeklyVolumeData, error: weeklyVolumeError, refetch: refetchWeeklyVolume } = useQuery({
+    queryKey: ['weeklyVolume', chartPreferences.historicalWeeks, chartPreferences.futureWeeks, preferences.weekStartsOn],
+    queryFn: async () => {
+      const response = await activitiesAPI.getWeeklyVolume({
+        weeks: chartPreferences.historicalWeeks,
+        includePlanned: true,
+        futureWeeks: chartPreferences.futureWeeks,
+        weekStartsOn: preferences.weekStartsOn,
+      });
+      return response.data.weeklyData as WeeklyVolumeData[];
+    },
+    retry: 2,
+    retryDelay: 1000,
+  });
+
+  const handleChartPreferencesChange = async (newPrefs: Partial<typeof chartPreferences>) => {
+    await updateChartPreferences(newPrefs);
+  };
 
   // Calculate current month stats
   const monthlyStats = React.useMemo(() => {
@@ -209,18 +242,23 @@ export default function DashboardPage() {
               <div className={activeGoal && countdown ? "pt-6 border-t border-white/30" : ""}>
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-sm font-semibold opacity-90">Training Block Progress</p>
-                  <p className="text-sm opacity-75">
-                    Day {daysElapsed} of {totalDays}
-                  </p>
+                  <div className="flex items-center gap-3">
+                    <p className="text-2xl font-bold">
+                      {percentage.toFixed(0)}%
+                    </p>
+                    <p className="text-sm opacity-75">
+                      Day {daysElapsed} of {totalDays}
+                    </p>
+                  </div>
                 </div>
                 <div className="bg-white/20 rounded-full h-6 overflow-hidden mb-2">
                   <div
                     className="bg-white h-6 rounded-full transition-all duration-500 flex items-center justify-center"
                     style={{ width: `${percentage}%` }}
                   >
-                    {percentage > 15 && (
+                    {percentage > 10 && (
                       <span className="text-xs font-bold text-orange-600">
-                        {percentage.toFixed(1)}%
+                        {percentage.toFixed(0)}%
                       </span>
                     )}
                   </div>
@@ -262,51 +300,70 @@ export default function DashboardPage() {
       )}
 
       {/* Upcoming Workouts */}
-      {visibility.upcomingWorkouts && upcomingWorkouts && upcomingWorkouts.length > 0 && (
+      {visibility.upcomingWorkouts && (
         <CollapsibleCard id="upcoming-workouts" title="Upcoming Workouts (Next 7 Days)">
-          <div className="space-y-3">
-            {upcomingWorkouts.slice(0, 5).map((workout: any) => (
-              <div
-                key={workout.id}
-                className="card-subtle"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-semibold text-neutral-900 dark:text-neutral-100">
-                      {workout.name || workout.workout_type}
-                    </h3>
-                    <p className="text-sm text-secondary">
-                      {format(new Date(workout.scheduled_date), 'EEEE, MMM dd')}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    {workout.target_distance_meters && (
-                      <p className="font-semibold text-neutral-900 dark:text-neutral-100">
-                        {convertDistance(workout.target_distance_meters)} {distanceUnit}
-                      </p>
-                    )}
-                    {workout.target_hr_zone && (
+          {workoutsError ? (
+            <InlineError
+              message="Failed to load upcoming workouts"
+              onRetry={() => window.location.reload()}
+            />
+          ) : upcomingWorkouts && upcomingWorkouts.length > 0 ? (
+          <>
+            <div className="space-y-3">
+              {upcomingWorkouts.slice(0, 5).map((workout: any) => (
+                <div
+                  key={workout.id}
+                  className="card-subtle"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-semibold text-neutral-900 dark:text-neutral-100">
+                        {workout.name || workout.workout_type}
+                      </h3>
                       <p className="text-sm text-secondary">
-                        Zone {workout.target_hr_zone}
+                        {format(new Date(workout.scheduled_date), 'EEEE, MMM dd')}
                       </p>
-                    )}
+                    </div>
+                    <div className="text-right">
+                      {workout.target_distance_meters && (
+                        <p className="font-semibold text-neutral-900 dark:text-neutral-100">
+                          {convertDistance(workout.target_distance_meters)} {distanceUnit}
+                        </p>
+                      )}
+                      {workout.target_hr_zone && (
+                        <p className="text-sm text-secondary">
+                          Zone {workout.target_hr_zone}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-          <button
-            onClick={() => navigate('/training')}
-            className="w-full mt-4 btn btn-secondary"
-          >
-            View Full Calendar
-          </button>
+              ))}
+            </div>
+            <button
+              onClick={() => navigate('/training')}
+              className="w-full mt-4 btn btn-secondary"
+            >
+              View Full Calendar
+            </button>
+          </>
+          ) : (
+            <p className="text-secondary text-center py-4">No upcoming workouts in the next 7 days</p>
+          )}
         </CollapsibleCard>
       )}
 
       {/* Stats Cards */}
       {visibility.statsCards && (
         <CollapsibleCard id="stats" title="Statistics">
+          {statsError && (
+            <div className="mb-4">
+              <InlineError
+                message="Failed to load statistics"
+                onRetry={() => refetchStats()}
+              />
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {/* This Month */}
             <div className="card-stat group">
@@ -372,7 +429,33 @@ export default function DashboardPage() {
       {/* HR Zone Distribution */}
       {visibility.hrZones && (
         <CollapsibleCard id="hr-zones" title="Heart Rate Zones">
-          <HRZoneChart data={hrZonesData || null} />
+          {hrZonesError ? (
+            <InlineError
+              message="Failed to load heart rate zones"
+              onRetry={() => refetchHRZones()}
+            />
+          ) : (
+            <HRZoneChart data={hrZonesData || null} />
+          )}
+        </CollapsibleCard>
+      )}
+
+      {/* Weekly Training Volume */}
+      {visibility.trainingVolume && (
+        <CollapsibleCard id="training-volume" title="Weekly Training Volume">
+          {weeklyVolumeError ? (
+            <InlineError
+              message="Failed to load training volume data"
+              onRetry={() => refetchWeeklyVolume()}
+            />
+          ) : (
+            <TrainingVolumeChart
+              data={weeklyVolumeData || []}
+              distanceUnit={distanceUnit}
+              chartPreferences={chartPreferences}
+              onPreferencesChange={handleChartPreferencesChange}
+            />
+          )}
         </CollapsibleCard>
       )}
 
@@ -380,7 +463,15 @@ export default function DashboardPage() {
       {visibility.recentActivities && (
         <CollapsibleCard id="recent-activities" title="Recent Activities">
         {activitiesLoading ? (
-          <p className="text-secondary">Loading activities...</p>
+          <LoadingDisplay message="Loading activities..." />
+        ) : activitiesError ? (
+          <ErrorDisplay
+            error={activitiesError as Error}
+            title="Failed to Load Activities"
+            message="Unable to load your recent activities. Please try syncing with Strava."
+            onRetry={() => refetch()}
+            type={(activitiesError as any).message?.includes('Network') || (activitiesError as any).message?.includes('fetch') ? 'network' : 'general'}
+          />
         ) : activitiesData && activitiesData.length > 0 ? (
           <div className="space-y-3">
             {activitiesData.map((activity) => (

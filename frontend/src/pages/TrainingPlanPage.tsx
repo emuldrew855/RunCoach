@@ -5,18 +5,23 @@ import { TrainingPlanUpload } from '../components/training/TrainingPlanUpload';
 import { WorkoutForm } from '../components/training/WorkoutForm';
 import { TrainingPlanList } from '../components/training/TrainingPlanList';
 import { trainingPlanAPI } from '../services/api';
+import ErrorDisplay, { InlineError, LoadingDisplay } from '../components/ErrorDisplay';
 
 type TabType = 'calendar' | 'upload' | 'create' | 'manage';
 
 export const TrainingPlanPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('calendar');
   const [activePlan, setActivePlan] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     loadActivePlan();
   }, []);
 
   const loadActivePlan = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const response = await trainingPlanAPI.getActivePlan();
       if (response.data.plan) {
@@ -25,10 +30,15 @@ export const TrainingPlanPage: React.FC = () => {
         // No active plan, create a default one
         await createDefaultPlan();
       }
-    } catch (error) {
-      console.error('Failed to load active plan:', error);
-      // Try creating a default plan as fallback
-      await createDefaultPlan();
+    } catch (err: any) {
+      console.error('Failed to load active plan:', err);
+      setError(err);
+      // Don't try creating default plan if there's a network error
+      if (!err.message?.includes('Network') && !err.message?.includes('fetch')) {
+        await createDefaultPlan();
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -117,7 +127,17 @@ export const TrainingPlanPage: React.FC = () => {
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-lg p-6">
           {activeTab === 'calendar' && (
             <div>
-              {activePlan ? (
+              {loading ? (
+                <LoadingDisplay message="Loading training plan..." />
+              ) : error ? (
+                <ErrorDisplay
+                  error={error}
+                  title="Failed to Load Training Plan"
+                  message="Unable to load your training plan. Please check your connection and try again."
+                  onRetry={loadActivePlan}
+                  type={error.message?.includes('Network') || error.message?.includes('fetch') ? 'network' : 'general'}
+                />
+              ) : activePlan ? (
                 <>
                   <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                     <p className="text-sm text-blue-800 dark:text-blue-200">
@@ -127,8 +147,22 @@ export const TrainingPlanPage: React.FC = () => {
                   <WorkoutCalendar />
                 </>
               ) : (
-                <div className="flex items-center justify-center py-12">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+                <div className="text-center py-12">
+                  <p className="text-slate-600 dark:text-slate-400 mb-4">
+                    No active training plan found.
+                  </p>
+                  <button
+                    onClick={() => setActiveTab('upload')}
+                    className="btn btn-primary mr-2"
+                  >
+                    Upload Plan
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('create')}
+                    className="btn btn-secondary"
+                  >
+                    Create Workout
+                  </button>
                 </div>
               )}
             </div>

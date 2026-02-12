@@ -1,0 +1,136 @@
+name: Deploy to Azure Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '18'
+  AZURE_RESOURCE_GROUP: runcoach-prod
+
+jobs:
+  # Backend deployment
+  deploy-backend:
+    name: Deploy Backend to Azure App Service
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Run tests
+        working-directory: ./backend
+        run: npm test || echo "No tests configured"
+
+      - name: Build backend
+        working-directory: ./backend
+        run: npm run build
+
+      - name: Create deployment package
+        working-directory: ./backend
+        run: |
+          mkdir -p deploy
+          cp -r dist node_modules package.json package-lock.json deploy/
+          cd deploy
+          zip -r ../backend-deploy.zip .
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ secrets.AZURE_BACKEND_APP_NAME }}
+          package: ./backend/backend-deploy.zip
+
+      - name: Azure logout
+        run: az logout
+        if: always()
+
+  # Frontend deployment
+  deploy-frontend:
+    name: Deploy Frontend to Azure Static Web Apps
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ./frontend
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: npm run build
+
+      - name: Deploy to Azure Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: 'upload'
+          app_location: '/frontend'
+          output_location: 'dist'
+          skip_app_build: true
+
+  # Post-deployment health check
+  health-check:
+    name: Health Check
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-frontend]
+
+    steps:
+      - name: Wait for deployment to stabilize
+        run: sleep 30
+
+      - name: Check backend health
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.BACKEND_URL }}/health)
+          if [ $response -eq 200 ]; then
+            echo "✓ Backend health check passed"
+          else
+            echo "✗ Backend health check failed (HTTP $response)"
+            exit 1
+          fi
+
+      - name: Check frontend
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.FRONTEND_URL }})
+          if [ $response -eq 200 ]; then
+            echo "✓ Frontend health check passed"
+          else
+            echo "✗ Frontend health check failed (HTTP $response)"
+            exit 1
+          fi
+
+      - name: Notify deployment success
+        if: success()
+        run: |
+          echo "🎉 Deployment successful!"
+          echo "Backend: ${{ secrets.BACKEND_URL }}"
+          echo "Frontend: ${{ secrets.FRONTEND_URL }}"

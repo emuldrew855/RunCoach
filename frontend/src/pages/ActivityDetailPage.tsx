@@ -4,12 +4,13 @@ import { useQuery } from '@tanstack/react-query';
 import { activitiesAPI, chatAPI } from '../services/api';
 import { Activity } from '../types';
 import { format } from 'date-fns';
-import { ArrowLeft, Calendar, Clock, Heart, Send, MessageCircle, TrendingUp, Mountain, Activity as ActivityIcon } from 'lucide-react';
+import { ArrowLeft, Calendar, Clock, Heart, Send, MessageCircle, Mountain, Activity as ActivityIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { usePreferences } from '../context/PreferencesContext';
 import { CollapsibleCard } from '../components/CollapsibleCard';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import ErrorDisplay, { LoadingDisplay } from '../components/ErrorDisplay';
 
 export default function ActivityDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -23,41 +24,106 @@ export default function ActivityDetailPage() {
   const [showChat, setShowChat] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { data: activitiesData } = useQuery({
+  const { data: activitiesData, isLoading, error, refetch } = useQuery({
     queryKey: ['activities'],
     queryFn: async () => {
       const response = await activitiesAPI.getActivities({ limit: 100 });
       return response.data.activities as Activity[];
     },
+    retry: 2,
+    retryDelay: 1000,
   });
 
   const activity = activitiesData?.find(a => a.id === parseInt(id || '0'));
 
+  // Console log full activity data to see what's available from Strava
+  useEffect(() => {
+    if (activity) {
+      console.log('=== FULL STRAVA ACTIVITY DATA ===');
+      console.log('Activity ID:', activity.id);
+      console.log('Full Activity Object:', activity);
+      console.log('Available Fields:', Object.keys(activity).sort());
+      console.log('================================');
+    }
+  }, [activity]);
+
+  // Fetch and log Activity Zones data
+  useEffect(() => {
+    const fetchActivityZones = async () => {
+      if (!activity?.id) return;
+
+      try {
+        const token = localStorage.getItem('jwt');
+        const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1';
+
+        console.log('=== FETCHING ACTIVITY ZONES ===');
+        console.log('Activity ID:', activity.id);
+
+        const response = await fetch(`${API_BASE}/activities/${activity.id}/zones`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const zonesData = await response.json();
+          console.log('=== ACTIVITY ZONES DATA ===');
+          console.log('Zones Response:', zonesData);
+          console.log('===========================');
+        } else {
+          console.log('Activity Zones API returned status:', response.status);
+          if (response.status === 404) {
+            console.log('Zones data not available for this activity (404 - may not be a Summit feature or data not available)');
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching activity zones:', error);
+      }
+    };
+
+    fetchActivityZones();
+  }, [activity?.id]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingMessage]);
+
+  const createConversation = async () => {
+    try {
+      if (!activity) {
+        console.error('No activity found for conversation creation');
+        toast.error('Activity data not available');
+        return;
+      }
+
+      const formattedDate = format(new Date(activity.start_date), 'MMM dd, yyyy');
+      const distance = convertDistance(Number(activity.distance_meters), 1);
+      const title = `Run: ${activity?.name || 'Activity'} - ${formattedDate} - ${distance}${distanceUnit}`;
+
+      console.log('Creating conversation with title:', title);
+      const response = await chatAPI.createConversation(title);
+      console.log('Conversation created:', response.data.data.conversation);
+
+      setConversationId(response.data.data.conversation.id);
+
+      // Pre-fill with context
+      const prefillText = `I'd like to discuss my run from ${format(new Date(activity.start_date), 'MMMM dd, yyyy')}. I ran ${convertDistance(Number(activity.distance_meters), 2)} ${distanceUnit} in ${formatDuration(activity.moving_time_seconds)} at a pace of ${formatPace(activity.average_speed)}.${activity.average_heartrate ? ` My average heart rate was ${Number(activity.average_heartrate).toFixed(0)} bpm (${getHeartRateZone(Number(activity.average_heartrate))?.desc} zone).` : ''} How does this run contribute to my training goal?`;
+
+      console.log('Setting pre-filled text:', prefillText);
+      setInput(prefillText);
+    } catch (error: any) {
+      console.error('Failed to create conversation:', error);
+      toast.error(`Failed to create conversation: ${error.message || 'Unknown error'}`);
+    }
+  };
 
   // Create a new conversation when chat is opened
   useEffect(() => {
     if (showChat && !conversationId && activity) {
       createConversation();
     }
-  }, [showChat, conversationId, activity]);
-
-  const createConversation = async () => {
-    try {
-      const formattedDate = format(new Date(activity!.start_date), 'MMM dd, yyyy');
-      const distance = convertDistance(Number(activity!.distance_meters), 1);
-      const title = `Run: ${activity?.name || 'Activity'} - ${formattedDate} - ${distance}${distanceUnit}`;
-
-      const response = await chatAPI.createConversation(title);
-      setConversationId(response.data.conversation.id);
-      // Pre-fill with context
-      setInput(`I'd like to discuss my run from ${format(new Date(activity!.start_date), 'MMMM dd, yyyy')}. I ran ${convertDistance(Number(activity!.distance_meters), 2)} ${distanceUnit} in ${formatDuration(activity!.moving_time_seconds)} at a pace of ${formatPace(activity!.average_speed)}.${activity!.average_heartrate ? ` My average heart rate was ${Number(activity!.average_heartrate).toFixed(0)} bpm (${getHeartRateZone(Number(activity!.average_heartrate))?.desc} zone).` : ''} How does this run contribute to my sub-3 hour marathon goal?`);
-    } catch (error) {
-      toast.error('Failed to create conversation');
-    }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showChat, conversationId, activity?.id]);
 
   const handleSendMessage = async () => {
     if (!input.trim() || !conversationId || isStreaming) return;
@@ -76,7 +142,8 @@ export default function ActivityDetailPage() {
 
     try {
       const token = localStorage.getItem('jwt');
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/chat/message`, {
+      const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1';
+      const response = await fetch(`${API_BASE}/chat/message`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -141,8 +208,8 @@ export default function ActivityDetailPage() {
     return (
       <div className="text-center py-12">
         <p className="text-gray-600 dark:text-gray-400">Activity not found</p>
-        <button onClick={() => navigate('/dashboard')} className="btn btn-primary mt-4">
-          Back to Dashboard
+        <button onClick={() => navigate('/training')} className="btn btn-primary mt-4">
+          Back to Training
         </button>
       </div>
     );
@@ -173,16 +240,72 @@ export default function ActivityDetailPage() {
     return { zone: 'Zone 5', color: 'text-red-600', desc: 'Maximum' };
   };
 
+  // Handle loading and error states
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <button
+          onClick={() => navigate('/training')}
+          className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
+        >
+          <ArrowLeft size={20} />
+          Back to Training
+        </button>
+        <LoadingDisplay message="Loading activity details..." />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <button
+          onClick={() => navigate('/training')}
+          className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
+        >
+          <ArrowLeft size={20} />
+          Back to Training
+        </button>
+        <ErrorDisplay
+          error={error as Error}
+          title="Failed to Load Activity"
+          message="Unable to load activity details. Please check your connection and try again."
+          onRetry={() => refetch()}
+          type={(error as any).message?.includes('Network') || (error as any).message?.includes('fetch') ? 'network' : 'general'}
+        />
+      </div>
+    );
+  }
+
+  if (!activity) {
+    return (
+      <div className="space-y-6">
+        <button
+          onClick={() => navigate('/training')}
+          className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
+        >
+          <ArrowLeft size={20} />
+          Back to Training
+        </button>
+        <ErrorDisplay
+          title="Activity Not Found"
+          message="The requested activity could not be found."
+          onRetry={() => navigate('/training')}
+        />
+      </div>
+    );
+  }
+
   const hrZone = getHeartRateZone(activity.average_heartrate ? Number(activity.average_heartrate) : undefined);
 
   return (
     <div className="space-y-6">
       <button
-        onClick={() => navigate('/dashboard')}
+        onClick={() => navigate('/training')}
         className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
       >
         <ArrowLeft size={20} />
-        Back to Dashboard
+        Back to Training
       </button>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -14,6 +14,23 @@ export interface User {
   last_login_at?: Date;
 }
 
+export interface ChartPreferences {
+  historicalWeeks: number;
+  futureWeeks: number;
+  chartType: 'bar' | 'line';
+  dataView: 'both' | 'actual' | 'planned';
+  showAverage: boolean;
+}
+
+export interface PersonalBests {
+  '5k'?: number;
+  '10k'?: number;
+  '15k'?: number;
+  '30k'?: number;
+  'half_marathon'?: number;
+  'marathon'?: number;
+}
+
 export interface UserProfile {
   id: number;
   user_id: number;
@@ -29,6 +46,30 @@ export interface UserProfile {
   timezone: string;
   training_block_start?: Date;
   training_block_end?: Date;
+  coach_style?: 'strict' | 'supportive' | 'analytical' | 'motivational';
+  coach_strictness_level?: number; // 1-5 scale
+  coach_communication_style?: 'casual' | 'balanced' | 'professional';
+  chart_preferences?: ChartPreferences;
+  personal_bests?: PersonalBests;
+  created_at: Date;
+  updated_at: Date;
+}
+
+// Race history
+export interface RaceHistory {
+  id: number;
+  user_id: number;
+  race_name: string;
+  race_date: Date;
+  race_type: '5k' | '10k' | '15k' | 'half_marathon' | 'marathon' | 'ultra' | 'other';
+  finish_time_seconds: number;
+  race_location?: string;
+  race_notes?: string;
+  is_personal_best: boolean;
+  placement?: number;
+  age_group_placement?: number;
+  weather_conditions?: string;
+  elevation_gain_meters?: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -168,6 +209,10 @@ export interface ChatMessage {
   context_snapshot?: any;
   token_count?: number;
   model_used?: string;
+  tool_calls?: any;
+  tool_results?: any;
+  pending_actions?: string[];
+  is_agent_initiated?: boolean;
   created_at: Date;
 }
 

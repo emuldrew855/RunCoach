@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ActionConfirmationCard from '../components/ActionConfirmationCard';
+import ErrorDisplay, { InlineError, LoadingDisplay } from '../components/ErrorDisplay';
 
 export default function ChatPage() {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
@@ -18,6 +19,8 @@ export default function ChatPage() {
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [pendingActions, setPendingActions] = useState<Map<string, any>>(new Map());
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [messagesError, setMessagesError] = useState<Error | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Check for activity context from sessionStorage
@@ -40,13 +43,54 @@ export default function ChatPage() {
     }
   }, []);
 
-  const { data: conversations, refetch: refetchConversations } = useQuery({
+  const {
+    data: conversationsRaw,
+    refetch: refetchConversations,
+    isLoading: conversationsLoading,
+    error: conversationsError,
+  } = useQuery({
     queryKey: ['conversations'],
     queryFn: async () => {
       const response = await chatAPI.getConversations();
-      return response.data.conversations as Conversation[];
+      return response.data.data.conversations as Conversation[];
     },
+    retry: 2,
+    retryDelay: 1000,
   });
+
+  // Filter out any duplicate conversations (by ID) as a safety measure
+  const conversations = conversationsRaw
+    ? conversationsRaw.filter((conv, index, self) =>
+        index === self.findIndex(c => c.id === conv.id)
+      )
+    : undefined;
+
+  // Fetch pending actions
+  const {
+    data: pendingActionsData,
+    refetch: refetchPendingActions,
+    error: pendingActionsError,
+  } = useQuery({
+    queryKey: ['pendingActions'],
+    queryFn: async () => {
+      const response = await agentActionsAPI.getPendingActions();
+      return response.data.data.actions || [];
+    },
+    refetchInterval: 5000, // Refetch every 5 seconds
+    retry: 1,
+    retryDelay: 2000,
+  });
+
+  // Update pendingActions state when data changes
+  useEffect(() => {
+    if (pendingActionsData) {
+      const actionsMap = new Map();
+      pendingActionsData.forEach((action: any) => {
+        actionsMap.set(action.id, action);
+      });
+      setPendingActions(actionsMap);
+    }
+  }, [pendingActionsData]);
 
   useEffect(() => {
     if (conversations && conversations.length > 0 && !selectedConversation) {
@@ -65,11 +109,29 @@ export default function ChatPage() {
   }, [messages, streamingMessage]);
 
   const loadMessages = async (conversationId: string) => {
+    setMessagesLoading(true);
+    setMessagesError(null);
     try {
       const response = await chatAPI.getConversationHistory(conversationId);
-      setMessages(response.data.messages);
-    } catch (error) {
-      toast.error('Failed to load messages');
+      const fetchedMessages = response.data.data.messages;
+
+      // Deduplicate messages by ID (in case of any race conditions)
+      const uniqueMessages = fetchedMessages.filter((msg: ChatMessage, index: number, self: ChatMessage[]) =>
+        index === self.findIndex((m) => m.id === msg.id)
+      );
+
+      setMessages(uniqueMessages);
+    } catch (error: any) {
+      console.error('Failed to load messages:', error);
+      setMessagesError(error);
+      const errorMessage = error.response?.status === 503
+        ? 'Server is temporarily unavailable'
+        : error.message?.includes('Network')
+        ? 'Connection lost. Check your internet.'
+        : 'Failed to load messages';
+      toast.error(errorMessage);
+    } finally {
+      setMessagesLoading(false);
     }
   };
 
@@ -77,9 +139,13 @@ export default function ChatPage() {
     try {
       const response = await chatAPI.createConversation();
       refetchConversations();
-      setSelectedConversation(response.data.conversation.id);
-    } catch (error) {
-      toast.error('Failed to create conversation');
+      setSelectedConversation(response.data.data.conversation.id);
+    } catch (error: any) {
+      console.error('Failed to create conversation:', error);
+      const errorMessage = error.response?.status === 503
+        ? 'Server is currently unavailable'
+        : 'Failed to create conversation. Please try again.';
+      toast.error(errorMessage);
     }
   };
 
@@ -196,7 +262,8 @@ export default function ChatPage() {
 
     try {
       const token = localStorage.getItem('jwt');
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/chat/message`, {
+      const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1';
+      const response = await fetch(`${API_BASE}/chat/message`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -207,6 +274,32 @@ export default function ChatPage() {
           message: input,
         }),
       });
+
+      // Check for token limit error (429)
+      if (response.status === 429) {
+        const errorData = await response.json();
+        if (errorData.code === 'TOKEN_LIMIT_EXCEEDED') {
+          toast.error(
+            `Daily Token Limit Reached!\n\n${errorData.details.message}\n\nUsed: ${errorData.details.used.toLocaleString()} / ${errorData.details.limit.toLocaleString()} tokens\n\nYour limit will reset in 24 hours.`,
+            {
+              duration: 10000,
+              style: {
+                maxWidth: '500px',
+              },
+            }
+          );
+          setIsStreaming(false);
+          return;
+        }
+      }
+
+      // Check for other non-OK responses
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'An error occurred' }));
+        toast.error(errorData.error || `Server error: ${response.status}`);
+        setIsStreaming(false);
+        return;
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -264,17 +357,12 @@ export default function ChatPage() {
         }
       }
 
-      const assistantMessage: ChatMessage = {
-        id: Date.now() + 1,
-        user_id: 0,
-        conversation_id: selectedConversation,
-        role: 'assistant',
-        content: fullResponse,
-        created_at: new Date().toISOString(),
-      };
-
-      setMessages((prev) => [...prev, assistantMessage]);
+      // Clear streaming message
       setStreamingMessage('');
+
+      // Reload messages from backend to ensure we have the latest state
+      // This prevents duplicates and ensures single source of truth
+      await loadMessages(selectedConversation);
     } catch (error) {
       console.error('Send message error:', error);
       toast.error('Failed to send message');
@@ -287,12 +375,8 @@ export default function ChatPage() {
     try {
       await agentActionsAPI.approveAction(actionId);
 
-      // Remove from pending actions
-      setPendingActions(prev => {
-        const newMap = new Map(prev);
-        newMap.delete(actionId);
-        return newMap;
-      });
+      // Refetch pending actions to update the list
+      await refetchPendingActions();
 
       // Reload messages to show updated plan
       if (selectedConversation) {
@@ -310,12 +394,8 @@ export default function ChatPage() {
     try {
       await agentActionsAPI.rejectAction(actionId, reason);
 
-      // Remove from pending actions
-      setPendingActions(prev => {
-        const newMap = new Map(prev);
-        newMap.delete(actionId);
-        return newMap;
-      });
+      // Refetch pending actions to update the list
+      await refetchPendingActions();
 
       toast.success('Action rejected');
     } catch (error: any) {
@@ -337,66 +417,85 @@ export default function ChatPage() {
         </button>
 
         <div className="flex-1 overflow-y-auto space-y-2">
-          {conversations?.map((conv) => (
-            <div
-              key={conv.id}
-              className={`group relative rounded-lg transition-colors ${
-                selectedConversation === conv.id
-                  ? 'bg-strava text-white'
-                  : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
-            >
-              {editingConvId === conv.id ? (
-                <div className="flex items-center gap-1 p-2">
-                  <input
-                    type="text"
-                    value={editingTitle}
-                    onChange={(e) => setEditingTitle(e.target.value)}
-                    className="flex-1 px-2 py-1 text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded"
-                    autoFocus
-                    onKeyPress={(e) => e.key === 'Enter' && handleSaveTitle(conv.id)}
-                  />
-                  <button
-                    onClick={() => handleSaveTitle(conv.id)}
-                    className="p-1 hover:bg-green-100 dark:hover:bg-green-900 rounded"
-                  >
-                    <Check size={16} className="text-green-600 dark:text-green-400" />
-                  </button>
-                  <button
-                    onClick={handleCancelEdit}
-                    className="p-1 hover:bg-red-100 dark:hover:bg-red-900 rounded"
-                  >
-                    <X size={16} className="text-red-600 dark:text-red-400" />
-                  </button>
-                </div>
-              ) : (
-                <div className="flex items-center">
-                  <button
-                    onClick={() => setSelectedConversation(conv.id)}
-                    className="flex-1 text-left px-3 py-2 text-sm"
-                  >
-                    {conv.title || 'New Conversation'}
-                  </button>
-                  <div className="flex items-center gap-1 pr-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          {conversationsLoading ? (
+            <div className="flex items-center justify-center h-32">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-strava"></div>
+            </div>
+          ) : conversationsError ? (
+            <div className="p-3 text-center">
+              <InlineError
+                message="Failed to load conversations"
+                onRetry={() => refetchConversations()}
+              />
+            </div>
+          ) : conversations && conversations.length === 0 ? (
+            <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-8">
+              No conversations yet.
+              <br />
+              Start a new chat!
+            </div>
+          ) : (
+            conversations?.map((conv) => (
+              <div
+                key={conv.id}
+                className={`group relative rounded-lg transition-colors ${
+                  selectedConversation === conv.id
+                    ? 'bg-strava text-white'
+                    : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                }`}
+              >
+                {editingConvId === conv.id ? (
+                  <div className="flex items-center gap-1 p-2">
+                    <input
+                      type="text"
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      className="flex-1 px-2 py-1 text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded"
+                      autoFocus
+                      onKeyPress={(e) => e.key === 'Enter' && handleSaveTitle(conv.id)}
+                    />
                     <button
-                      onClick={() => handleEditConversation(conv)}
-                      className="p-1 hover:bg-blue-100 dark:hover:bg-blue-900 rounded"
-                      title="Rename"
+                      onClick={() => handleSaveTitle(conv.id)}
+                      className="p-1 hover:bg-green-100 dark:hover:bg-green-900 rounded"
                     >
-                      <Edit2 size={14} className={selectedConversation === conv.id ? 'text-white' : 'text-blue-600 dark:text-blue-400'} />
+                      <Check size={16} className="text-green-600 dark:text-green-400" />
                     </button>
                     <button
-                      onClick={() => handleDeleteConversation(conv.id)}
+                      onClick={handleCancelEdit}
                       className="p-1 hover:bg-red-100 dark:hover:bg-red-900 rounded"
-                      title="Delete"
                     >
-                      <Trash2 size={14} className={selectedConversation === conv.id ? 'text-white' : 'text-red-600 dark:text-red-400'} />
+                      <X size={16} className="text-red-600 dark:text-red-400" />
                     </button>
                   </div>
-                </div>
-              )}
-            </div>
-          ))}
+                ) : (
+                  <div className="flex items-center">
+                    <button
+                      onClick={() => setSelectedConversation(conv.id)}
+                      className="flex-1 text-left px-3 py-2 text-sm"
+                    >
+                      {conv.title || 'New Conversation'}
+                    </button>
+                    <div className="flex items-center gap-1 pr-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => handleEditConversation(conv)}
+                        className="p-1 hover:bg-blue-100 dark:hover:bg-blue-900 rounded"
+                        title="Rename"
+                      >
+                        <Edit2 size={14} className={selectedConversation === conv.id ? 'text-white' : 'text-blue-600 dark:text-blue-400'} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteConversation(conv.id)}
+                        className="p-1 hover:bg-red-100 dark:hover:bg-red-900 rounded"
+                        title="Delete"
+                      >
+                        <Trash2 size={14} className={selectedConversation === conv.id ? 'text-white' : 'text-red-600 dark:text-red-400'} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
         </div>
       </div>
 
@@ -416,30 +515,51 @@ export default function ChatPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={`max-w-[70%] rounded-lg px-4 py-3 ${
-                  message.role === 'user'
-                    ? 'bg-strava text-white'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
-                }`}
-              >
-                {message.role === 'user' ? (
-                  <p className="whitespace-pre-wrap">{message.content}</p>
-                ) : (
-                  <div className="prose dark:prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {message.content}
-                    </ReactMarkdown>
-                  </div>
-                )}
+          {messagesLoading ? (
+            <LoadingDisplay message="Loading conversation..." />
+          ) : messagesError ? (
+            <ErrorDisplay
+              error={messagesError}
+              title="Failed to Load Messages"
+              message="Unable to load conversation history. Please try again."
+              onRetry={() => selectedConversation && loadMessages(selectedConversation)}
+              type={messagesError.message?.includes('Network') || messagesError.message?.includes('fetch') ? 'network' : 'general'}
+            />
+          ) : messages.length === 0 && !isStreaming ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center text-gray-500 dark:text-gray-400">
+                <p className="text-lg font-medium mb-2">Start a conversation</p>
+                <p className="text-sm">Ask me anything about your training, nutrition, or running goals!</p>
               </div>
             </div>
-          ))}
+          ) : (
+            <>
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div
+                    className={`max-w-[70%] rounded-lg px-4 py-3 ${
+                      message.role === 'user'
+                        ? 'bg-strava text-white'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+                    }`}
+                  >
+                    {message.role === 'user' ? (
+                      <p className="whitespace-pre-wrap">{message.content}</p>
+                    ) : (
+                      <div className="prose dark:prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
 
           {streamingMessage && (
             <div className="flex justify-start">
@@ -454,6 +574,16 @@ export default function ChatPage() {
           )}
 
           {/* Pending Actions */}
+          {pendingActionsError && (
+            <div className="flex justify-center">
+              <div className="w-full max-w-[85%]">
+                <InlineError
+                  message="Failed to load pending actions"
+                  onRetry={() => refetchPendingActions()}
+                />
+              </div>
+            </div>
+          )}
           {Array.from(pendingActions.values()).map((action) => (
             <div key={action.action_id} className="flex justify-center">
               <div className="w-full max-w-[85%]">

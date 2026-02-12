@@ -7,6 +7,7 @@ export interface DashboardVisibility {
   alerts: boolean;
   upcomingWorkouts: boolean;
   statsCards: boolean;
+  trainingVolume: boolean;
   hrZones: boolean;
   recentActivities: boolean;
 }
@@ -17,6 +18,7 @@ const DEFAULT_VISIBILITY: DashboardVisibility = {
   alerts: true,
   upcomingWorkouts: true,
   statsCards: true,
+  trainingVolume: true,
   hrZones: true,
   recentActivities: true,
 };
@@ -27,6 +29,7 @@ const SECTION_LABELS: Record<keyof DashboardVisibility, string> = {
   alerts: 'Training Alerts',
   upcomingWorkouts: 'Upcoming Workouts',
   statsCards: 'Statistics Cards',
+  trainingVolume: 'Weekly Training Volume',
   hrZones: 'Heart Rate Zones',
   recentActivities: 'Recent Activities',
 };
