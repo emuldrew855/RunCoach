@@ -49,6 +49,11 @@ app.get('/api/auth/strava', (_req, res) => {
   res.redirect(301, '/api/v1/auth/strava');
 });
 
+app.get('/api/auth/strava/callback', (req, res) => {
+  const queryString = new URLSearchParams(req.query as any).toString();
+  res.redirect(301, `/api/v1/auth/callback?${queryString}`);
+});
+
 // API routes (v1)
 app.use('/api/v1', routes);
 
@@ -72,9 +77,19 @@ async function startServer() {
 
     // Start listening
     app.listen(PORT, () => {
-      console.log(`✓ Server running on http://localhost:${PORT}`);
-      console.log(`✓ API v1 available at http://localhost:${PORT}/api/v1`);
-      console.log(`✓ Frontend URL: ${process.env.FRONTEND_URL}`);
+      console.log('=== SERVER STARTUP ===');
+      console.log(`✓ Server running on port ${PORT}`);
+      console.log(`✓ API v1 available at /api/v1`);
+      console.log('');
+      console.log('=== CONFIGURATION ===');
+      console.log(`NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`FRONTEND_URL: ${process.env.FRONTEND_URL}`);
+      console.log(`STRAVA_CLIENT_ID: ${process.env.STRAVA_CLIENT_ID}`);
+      console.log(`STRAVA_REDIRECT_URI: ${process.env.STRAVA_REDIRECT_URI}`);
+      console.log(`DATABASE_URL: ${process.env.DATABASE_URL ? '[SET]' : '[MISSING]'}`);
+      console.log(`OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? '[SET]' : '[MISSING]'}`);
+      console.log(`JWT_SECRET: ${process.env.JWT_SECRET ? '[SET]' : '[MISSING]'}`);
+      console.log('=====================');
 
       // Start scheduled jobs
       startWeeklyAnalysisJob();
