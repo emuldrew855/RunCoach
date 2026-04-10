@@ -94,3 +94,93 @@ export async function getActivityStats(userId: number, days: number = 30): Promi
   );
   return result.rows[0];
 }
+
+export async function getActivityByIdForUser(
+  activityId: number,
+  userId: number
+): Promise<Activity | null> {
+  const result = await query(
+    'SELECT * FROM activities WHERE id = $1 AND user_id = $2',
+    [activityId, userId]
+  );
+  return result.rows[0] || null;
+}
+
+export async function getActivityInsights(activityId: number): Promise<any | null> {
+  const result = await query(
+    `SELECT
+       pacing_analysis as pacing,
+       hr_behavior as "hrBehavior",
+       effort_analysis as effort,
+       compliance_check as compliance,
+       risk_indicators as risks,
+       coaching_points as "coachingPoints"
+     FROM daily_run_insights
+     WHERE activity_id = $1`,
+    [activityId]
+  );
+  return result.rows[0] || null;
+}
+
+export async function getLinkedPlannedWorkout(activityId: number): Promise<any | null> {
+  // First, try to find by direct link (completed_activity_id)
+  const directLink = await query(
+    `SELECT
+       pw.id,
+       pw.name,
+       pw.workout_type,
+       pw.target_distance_meters,
+       pw.target_hr_zone,
+       pw.target_pace_min,
+       pw.target_pace_max,
+       pw.description,
+       'direct_link' as match_type
+     FROM planned_workouts pw
+     WHERE pw.completed_activity_id = $1`,
+    [activityId]
+  );
+
+  if (directLink.rows[0]) {
+    return directLink.rows[0];
+  }
+
+  // Fallback: Find workout scheduled for the same day as the activity
+  // This handles cases where activities aren't explicitly linked but a workout was planned
+  const dateMatch = await query(
+    `SELECT
+       pw.id,
+       pw.name,
+       pw.workout_type,
+       pw.target_distance_meters,
+       pw.target_hr_zone,
+       pw.target_pace_min,
+       pw.target_pace_max,
+       pw.description,
+       'date_match' as match_type
+     FROM planned_workouts pw
+     JOIN training_plans tp ON pw.training_plan_id = tp.id
+     JOIN activities a ON a.id = $1
+     WHERE tp.user_id = a.user_id
+       AND tp.is_active = true
+       AND pw.scheduled_date = DATE(a.start_date AT TIME ZONE COALESCE(a.timezone, 'UTC'))
+       AND pw.completed_activity_id IS NULL  -- Not already linked to another activity
+     ORDER BY
+       -- Prefer workouts with similar distance (within 30%)
+       CASE
+         WHEN pw.target_distance_meters IS NOT NULL
+           AND ABS(pw.target_distance_meters - a.distance_meters) / NULLIF(pw.target_distance_meters, 0) < 0.3
+         THEN 0
+         ELSE 1
+       END,
+       pw.id ASC
+     LIMIT 1`,
+    [activityId]
+  );
+
+  if (dateMatch.rows[0]) {
+    console.log(`📋 Found planned workout by date match for activity ${activityId}: ${dateMatch.rows[0].name}`);
+    return dateMatch.rows[0];
+  }
+
+  return null;
+}

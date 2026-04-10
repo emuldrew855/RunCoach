@@ -12,7 +12,7 @@
  *   ts-node src/scripts/backfillConversationEmbeddings.ts
  */
 
-import { pool } from '../config/database';
+import pool from '../config/database';
 import { processConversation } from '../services/conversationSummarizationService';
 
 interface ConversationRow {

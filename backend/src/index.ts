@@ -14,6 +14,7 @@ import { testConnection, runMigrations } from './config/database';
 import { startWeeklyAnalysisJob } from './agent/jobs/weekly-analysis.job';
 import { startRunnerTendencyJob } from './jobs/runner-tendency.job';
 import { startCoachingResponseJob } from './jobs/coaching-response.job';
+import logger from './utils/logger';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -25,7 +26,14 @@ app.use(cors({
   credentials: true,
 }));
 app.use(compression());
-app.use(morgan('dev'));
+// Use morgan with stderr stream for Azure App Service compatibility
+app.use(morgan('combined', {
+  stream: {
+    write: (message: string) => {
+      process.stderr.write(`[HTTP] ${message}`);
+    }
+  }
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -36,6 +44,32 @@ app.use(sessionTrackingMiddleware);
 // Health check endpoint (unversioned - standard practice)
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Debug endpoint to verify OAuth configuration (helps troubleshoot Strava redirect issues)
+app.get('/debug/oauth-config', (_req, res) => {
+  const redirectUri = process.env.STRAVA_REDIRECT_URI || '';
+  const clientId = process.env.STRAVA_CLIENT_ID || '';
+
+  // Build the exact URL that will be sent to Strava
+  const authUrl = `https://www.strava.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=read,activity:read_all,profile:read_all`;
+
+  res.json({
+    timestamp: new Date().toISOString(),
+    config: {
+      STRAVA_CLIENT_ID: clientId,
+      STRAVA_REDIRECT_URI: redirectUri,
+      STRAVA_REDIRECT_URI_LENGTH: redirectUri.length,
+      STRAVA_REDIRECT_URI_ENCODED: encodeURIComponent(redirectUri),
+      FRONTEND_URL: process.env.FRONTEND_URL || '[NOT SET]',
+    },
+    generatedAuthUrl: authUrl,
+    checks: {
+      hasHttps: redirectUri.startsWith('https://'),
+      hasTrailingWhitespace: redirectUri !== redirectUri.trim(),
+      hasLeadingWhitespace: redirectUri !== redirectUri.trimStart(),
+    }
+  });
 });
 
 // Backward compatibility redirect for Strava OAuth callback
@@ -64,40 +98,39 @@ app.use(errorHandler);
 async function startServer() {
   try {
     // Test database connection
-    console.log('Testing database connection...');
+    logger.info('DATABASE_CONNECTION_TEST');
     const isConnected = await testConnection();
 
     if (!isConnected) {
       throw new Error('Failed to connect to database');
     }
+    logger.info('DATABASE_CONNECTION_SUCCESS');
 
     // Run migrations
-    console.log('Running database migrations...');
+    logger.info('DATABASE_MIGRATIONS_START');
     await runMigrations();
+    logger.info('DATABASE_MIGRATIONS_COMPLETE');
 
     // Start listening
     app.listen(PORT, () => {
-      console.log('=== SERVER STARTUP ===');
-      console.log(`✓ Server running on port ${PORT}`);
-      console.log(`✓ API v1 available at /api/v1`);
-      console.log('');
-      console.log('=== CONFIGURATION ===');
-      console.log(`NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`FRONTEND_URL: ${process.env.FRONTEND_URL}`);
-      console.log(`STRAVA_CLIENT_ID: ${process.env.STRAVA_CLIENT_ID}`);
-      console.log(`STRAVA_REDIRECT_URI: ${process.env.STRAVA_REDIRECT_URI}`);
-      console.log(`DATABASE_URL: ${process.env.DATABASE_URL ? '[SET]' : '[MISSING]'}`);
-      console.log(`OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? '[SET]' : '[MISSING]'}`);
-      console.log(`JWT_SECRET: ${process.env.JWT_SECRET ? '[SET]' : '[MISSING]'}`);
-      console.log('=====================');
+      logger.info('SERVER_STARTUP', {
+        port: PORT,
+        nodeEnv: process.env.NODE_ENV || 'development',
+        frontendUrl: process.env.FRONTEND_URL,
+        stravaClientId: process.env.STRAVA_CLIENT_ID,
+        stravaRedirectUri: process.env.STRAVA_REDIRECT_URI,
+        databaseUrl: process.env.DATABASE_URL ? '[SET]' : '[MISSING]',
+        openaiApiKey: process.env.OPENAI_API_KEY ? '[SET]' : '[MISSING]',
+        jwtSecret: process.env.JWT_SECRET ? '[SET]' : '[MISSING]',
+      });
 
       // Start scheduled jobs
       startWeeklyAnalysisJob();
-      startRunnerTendencyJob();  // Phase 2: Bi-weekly tendency analysis
-      startCoachingResponseJob(); // Phase 2: Daily coaching effectiveness follow-up
+      startRunnerTendencyJob();
+      startCoachingResponseJob();
     });
   } catch (error) {
-    console.error('Failed to start server:', error);
+    logger.error('SERVER_STARTUP_FAILED', { error: String(error) });
     process.exit(1);
   }
 }

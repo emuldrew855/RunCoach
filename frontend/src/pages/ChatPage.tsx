@@ -2,14 +2,20 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { chatAPI, agentActionsAPI } from '../services/api';
 import { Conversation, ChatMessage } from '../types';
-import { Send, Plus, Edit2, Trash2, Check, X } from 'lucide-react';
+import { Send, Plus, Edit2, Trash2, Check, X, Menu, ChevronLeft, ChevronRight, Activity } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ActionConfirmationCard from '../components/ActionConfirmationCard';
 import ErrorDisplay, { InlineError, LoadingDisplay } from '../components/ErrorDisplay';
+import { TypingIndicator } from '../components/TypingIndicator';
+import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { CommandCenterMessage } from '../components/CommandCenterMessage';
 
 export default function ChatPage() {
+  const { keyboardHeight } = useKeyboardHeight();
+  const isMobile = useIsMobile();
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -21,7 +27,22 @@ export default function ChatPage() {
   const [pendingActions, setPendingActions] = useState<Map<string, any>>(new Map());
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [messagesError, setMessagesError] = useState<Error | null>(null);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{ show: boolean; convId: string | null; title: string }>({
+    show: false,
+    convId: null,
+    title: '',
+  });
+  const [deleteAllConfirmation, setDeleteAllConfirmation] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // State to track if we need to create a conversation from context
+  const [pendingContextConversation, setPendingContextConversation] = useState<{
+    title: string;
+    input: string;
+    context: any;
+  } | null>(null);
 
   // Check for activity context from sessionStorage
   useEffect(() => {
@@ -30,18 +51,54 @@ export default function ChatPage() {
       const context = JSON.parse(contextStr);
       setActivityContext(context);
 
-      // Pre-fill the input based on context type
+      let inputText = '';
+      let title = '';
+
+      // Determine input and title based on context type
       if (context.type === 'weekly_analysis') {
-        setInput(`Analyze my training week - provide a comprehensive overview of my progress this week, my plan for next week, and key recommendations for training, nutrition, sleep, and recovery to help me prepare for the week ahead.`);
+        inputText = `Analyze my training week - provide a comprehensive overview of my progress this week, my plan for next week, and key recommendations for training, nutrition, sleep, and recovery to help me prepare for the week ahead.`;
+        const startDate = new Date(context.weekStart);
+        const endDate = new Date(context.weekEnd);
+        const startStr = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const endStr = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        title = `Weekly Progress - ${startStr} to ${endStr}`;
+      } else if (context.type === 'planned_week_review') {
+        inputText = `Review my planned training week - analyze the structure, balance, and quality of my upcoming scheduled workouts. Focus on workout distribution, intensity balance, recovery placement, and suggest specific improvements to the plan itself. Don't focus on my adherence or completed workouts, just review the planned schedule.`;
+        const startDate = new Date(context.weekStart);
+        const endDate = new Date(context.weekEnd);
+        const startStr = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const endStr = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        title = `Plan Review - ${startStr} to ${endStr}`;
       } else {
         // Activity context
-        setInput(`I'd like to discuss my run from ${context.date}. ${context.distance} km in ${context.duration}.`);
+        inputText = `I'd like to discuss my run from ${context.date}. ${context.distance} km in ${context.duration}.`;
       }
+
+      setInput(inputText);
 
       // Clear the context so it doesn't persist
       sessionStorage.removeItem('chatContext');
+
+      // For weekly/plan contexts, auto-create a new conversation
+      if (title) {
+        setPendingContextConversation({ title, input: inputText, context });
+      }
     }
   }, []);
+
+  // Create conversation when we have a pending context and the API is ready
+  useEffect(() => {
+    if (pendingContextConversation) {
+      chatAPI.createConversation(pendingContextConversation.title).then(response => {
+        const newConvId = response.data.data.conversation.id;
+        setSelectedConversation(newConvId);
+        setPendingContextConversation(null);
+      }).catch(error => {
+        console.error('Failed to auto-create conversation:', error);
+        setPendingContextConversation(null);
+      });
+    }
+  }, [pendingContextConversation]);
 
   const {
     data: conversationsRaw,
@@ -82,15 +139,22 @@ export default function ChatPage() {
   });
 
   // Update pendingActions state when data changes
+  // Filter to only show actions for the current conversation
   useEffect(() => {
-    if (pendingActionsData) {
+    if (pendingActionsData && selectedConversation) {
       const actionsMap = new Map();
       pendingActionsData.forEach((action: any) => {
-        actionsMap.set(action.id, action);
+        // Only include actions for the current conversation
+        if (action.conversation_id === selectedConversation) {
+          actionsMap.set(action.id, action);
+        }
       });
       setPendingActions(actionsMap);
+    } else if (!selectedConversation) {
+      // Clear pending actions if no conversation is selected
+      setPendingActions(new Map());
     }
-  }, [pendingActionsData]);
+  }, [pendingActionsData, selectedConversation]);
 
   useEffect(() => {
     if (conversations && conversations.length > 0 && !selectedConversation) {
@@ -138,7 +202,7 @@ export default function ChatPage() {
   const handleNewConversation = async () => {
     try {
       const response = await chatAPI.createConversation();
-      refetchConversations();
+      await refetchConversations(); // Await to ensure list updates before selecting
       setSelectedConversation(response.data.data.conversation.id);
     } catch (error: any) {
       console.error('Failed to create conversation:', error);
@@ -157,7 +221,7 @@ export default function ChatPage() {
   const handleSaveTitle = async (convId: string) => {
     try {
       await chatAPI.updateConversation(convId, editingTitle);
-      refetchConversations();
+      await refetchConversations(); // Await to ensure UI updates immediately
       setEditingConvId(null);
       toast.success('Conversation renamed');
     } catch (error) {
@@ -170,22 +234,112 @@ export default function ChatPage() {
     setEditingTitle('');
   };
 
-  const handleDeleteConversation = async (convId: string) => {
-    if (!confirm('Are you sure you want to delete this conversation?')) {
-      return;
-    }
+  const handleDeleteConversation = (convId: string, title: string) => {
+    setDeleteConfirmation({ show: true, convId, title });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmation.convId) return;
 
     try {
-      await chatAPI.deleteConversation(convId);
-      if (selectedConversation === convId) {
+      await chatAPI.deleteConversation(deleteConfirmation.convId);
+      if (selectedConversation === deleteConfirmation.convId) {
         setSelectedConversation(null);
       }
       refetchConversations();
       toast.success('Conversation deleted');
+      setDeleteConfirmation({ show: false, convId: null, title: '' });
     } catch (error) {
       toast.error('Failed to delete conversation');
+      setDeleteConfirmation({ show: false, convId: null, title: '' });
     }
   };
+
+  const cancelDelete = () => {
+    setDeleteConfirmation({ show: false, convId: null, title: '' });
+  };
+
+  const handleDeleteAll = () => {
+    setDeleteAllConfirmation(true);
+  };
+
+  const confirmDeleteAll = async () => {
+    if (!conversations || conversations.length === 0) return;
+
+    try {
+      // Delete all conversations
+      await Promise.all(
+        conversations.map(conv => chatAPI.deleteConversation(conv.id))
+      );
+
+      setSelectedConversation(null);
+      await refetchConversations();
+      toast.success(`Deleted ${conversations.length} conversation${conversations.length > 1 ? 's' : ''}`);
+      setDeleteAllConfirmation(false);
+    } catch (error) {
+      toast.error('Failed to delete all conversations');
+      setDeleteAllConfirmation(false);
+    }
+  };
+
+  const cancelDeleteAll = () => {
+    setDeleteAllConfirmation(false);
+  };
+
+  // Group conversations by date
+  const groupConversationsByDate = (convs: Conversation[]) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const thisWeekStart = new Date(today);
+    thisWeekStart.setDate(thisWeekStart.getDate() - 7);
+    const lastWeekStart = new Date(today);
+    lastWeekStart.setDate(lastWeekStart.getDate() - 14);
+
+    const groups: { [key: string]: Conversation[] } = {
+      'Today': [],
+      'Yesterday': [],
+      'This Week': [],
+      'Last Week': [],
+      'Older': []
+    };
+
+    convs.forEach(conv => {
+      const convDate = new Date(conv.created_at);
+      const convDay = new Date(convDate.getFullYear(), convDate.getMonth(), convDate.getDate());
+
+      if (convDay.getTime() === today.getTime()) {
+        groups['Today'].push(conv);
+      } else if (convDay.getTime() === yesterday.getTime()) {
+        groups['Yesterday'].push(conv);
+      } else if (convDate >= thisWeekStart) {
+        groups['This Week'].push(conv);
+      } else if (convDate >= lastWeekStart) {
+        groups['Last Week'].push(conv);
+      } else {
+        groups['Older'].push(conv);
+      }
+    });
+
+    // Filter out empty groups
+    return Object.entries(groups).filter(([_, convs]) => convs.length > 0);
+  };
+
+  // Handle ESC key to close delete modals
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (deleteConfirmation.show) {
+          cancelDelete();
+        } else if (deleteAllConfirmation) {
+          cancelDeleteAll();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [deleteConfirmation.show, deleteAllConfirmation]);
 
   const generateSmartTitle = (message: string, context?: any): string => {
     // Detect patterns in the first message to generate a meaningful title
@@ -197,12 +351,25 @@ export default function ChatPage() {
       const endDate = new Date(context.weekEnd);
       const startStr = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       const endStr = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      return `Weekly Analysis - ${startStr} to ${endStr}`;
+      return `Weekly Progress - ${startStr} to ${endStr}`;
+    }
+
+    if (context?.type === 'planned_week_review' && context.weekStart && context.weekEnd) {
+      const startDate = new Date(context.weekStart);
+      const endDate = new Date(context.weekEnd);
+      const startStr = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const endStr = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return `Plan Review - ${startStr} to ${endStr}`;
     }
 
     if (lowerMessage.includes('weekly analysis') || lowerMessage.includes('analyze my training week')) {
       const date = new Date();
       return `Weekly Analysis - ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    }
+
+    if (lowerMessage.includes('review my plan') || lowerMessage.includes('planned training week')) {
+      const date = new Date();
+      return `Plan Review - ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
     }
 
     if (lowerMessage.includes('run from') || lowerMessage.includes('discuss my run')) {
@@ -230,12 +397,37 @@ export default function ChatPage() {
   };
 
   const handleSendMessage = async () => {
-    if (!input.trim() || !selectedConversation || isStreaming) return;
+    if (!input.trim() || isStreaming) return;
+
+    // Auto-create a conversation if none is selected
+    let conversationId = selectedConversation;
+    if (!conversationId) {
+      try {
+        const response = await chatAPI.createConversation();
+        conversationId = response.data.data.conversation.id;
+
+        if (!conversationId) {
+          throw new Error('No conversation ID returned from server');
+        }
+
+        setSelectedConversation(conversationId);
+
+        // Wait for conversations list to refresh to ensure DB consistency
+        await refetchConversations();
+
+        // Small delay to ensure database transaction is committed
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error: any) {
+        console.error('Failed to create conversation:', error);
+        toast.error('Failed to create conversation. Please try again.');
+        return;
+      }
+    }
 
     const userMessage: ChatMessage = {
       id: Date.now(),
       user_id: 0,
-      conversation_id: selectedConversation,
+      conversation_id: conversationId,
       role: 'user',
       content: input,
       created_at: new Date().toISOString(),
@@ -248,13 +440,13 @@ export default function ChatPage() {
     setStreamingMessage('');
 
     // Auto-generate title for conversations that don't have one yet
-    const currentConv = conversations?.find(c => c.id === selectedConversation);
+    const currentConv = conversations?.find(c => c.id === conversationId);
     const isFirstMessage = messages.length === 0;
     if (isFirstMessage && currentConv && !currentConv.title) {
       const smartTitle = generateSmartTitle(messageText, activityContext);
       try {
-        await chatAPI.updateConversation(selectedConversation, smartTitle);
-        refetchConversations();
+        await chatAPI.updateConversation(conversationId, smartTitle);
+        await refetchConversations(); // Await to ensure UI updates immediately
       } catch (error) {
         console.error('Failed to auto-generate title:', error);
       }
@@ -270,10 +462,18 @@ export default function ChatPage() {
           'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          conversationId: selectedConversation,
-          message: input,
+          conversationId: conversationId,
+          message: messageText,
         }),
       });
+
+      // Check for conversation not found (404) - conversation was deleted or never created
+      if (response.status === 404) {
+        setIsStreaming(false);
+        setSelectedConversation(null);
+        toast.error('Conversation not found. Please create a new conversation and try again.');
+        return;
+      }
 
       // Check for token limit error (429)
       if (response.status === 429) {
@@ -362,7 +562,7 @@ export default function ChatPage() {
 
       // Reload messages from backend to ensure we have the latest state
       // This prevents duplicates and ensures single source of truth
-      await loadMessages(selectedConversation);
+      await loadMessages(conversationId);
     } catch (error) {
       console.error('Send message error:', error);
       toast.error('Failed to send message');
@@ -405,21 +605,59 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] gap-4">
-      {/* Conversations sidebar */}
-      <div className="w-64 bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 p-4 flex flex-col">
+    <div className="flex h-[calc(100dvh-8rem)] md:h-[calc(100vh-8rem)] gap-2 md:gap-4 max-w-full mx-auto w-full relative overflow-hidden">
+      {/* Mobile sidebar backdrop */}
+      {showSidebar && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setShowSidebar(false)}
+        />
+      )}
+
+      {/* Conversations sidebar - Minimalist Timeline */}
+      <div className={`${showSidebar ? 'translate-x-0' : '-translate-x-full'} ${sidebarCollapsed ? 'md:hidden' : 'md:translate-x-0'} fixed md:relative top-0 left-0 h-full md:h-auto w-64 md:w-56 lg:w-64 bg-neutral-900 dark:bg-black rounded-lg shadow-xl md:shadow border border-neutral-700/50 p-3 flex flex-col flex-shrink-0 transition-all duration-300 z-50 md:z-auto`}>
+        {/* Close button for mobile */}
         <button
-          onClick={handleNewConversation}
-          className="btn btn-primary w-full mb-4 flex items-center justify-center gap-2"
+          onClick={() => setShowSidebar(false)}
+          className="md:hidden absolute top-3 right-3 p-1.5 hover:bg-neutral-800 dark:hover:bg-neutral-900 rounded text-neutral-400 hover:text-neutral-200"
         >
-          <Plus size={16} />
-          New Chat
+          <X size={18} strokeWidth={1.5} />
         </button>
 
-        <div className="flex-1 overflow-y-auto space-y-2">
+        {/* Collapse button for desktop */}
+        <button
+          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          className="hidden md:flex absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 bg-neutral-900 dark:bg-black border border-neutral-700/50 rounded-full hover:bg-neutral-800 dark:hover:bg-neutral-900 shadow-lg transition-colors z-10"
+          title={sidebarCollapsed ? "Show conversations" : "Hide conversations"}
+        >
+          <ChevronLeft size={14} strokeWidth={1.5} className="text-neutral-400" />
+        </button>
+
+        {/* New Session button - Technical */}
+        <button
+          onClick={handleNewConversation}
+          className="w-full mb-3 px-3 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded text-cyan-400 text-xs font-mono uppercase tracking-wider transition-colors flex items-center justify-center gap-2"
+        >
+          <Plus size={14} strokeWidth={2} />
+          NEW SESSION
+        </button>
+
+        {/* Delete All button - only show if there are conversations */}
+        {conversations && conversations.length > 0 && (
+          <button
+            onClick={handleDeleteAll}
+            className="w-full mb-5 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded text-red-400 text-[10px] font-mono uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5"
+          >
+            <Trash2 size={12} strokeWidth={2} />
+            DELETE ALL ({conversations.length})
+          </button>
+        )}
+
+        {/* Session History - Timeline */}
+        <div className="flex-1 overflow-y-auto command-center-scroll">
           {conversationsLoading ? (
             <div className="flex items-center justify-center h-32">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-strava"></div>
+              <div className="animate-spin rounded-full h-6 w-6 border-b border-cyan-500"></div>
             </div>
           ) : conversationsError ? (
             <div className="p-3 text-center">
@@ -429,92 +667,155 @@ export default function ChatPage() {
               />
             </div>
           ) : conversations && conversations.length === 0 ? (
-            <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-8">
-              No conversations yet.
+            <div className="text-center text-neutral-500 text-xs font-mono py-8">
+              NO SESSIONS
               <br />
-              Start a new chat!
+              <span className="text-[10px] text-neutral-600">START NEW SESSION</span>
             </div>
           ) : (
-            conversations?.map((conv) => (
-              <div
-                key={conv.id}
-                className={`group relative rounded-lg transition-colors ${
-                  selectedConversation === conv.id
-                    ? 'bg-strava text-white'
-                    : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-                }`}
-              >
-                {editingConvId === conv.id ? (
-                  <div className="flex items-center gap-1 p-2">
-                    <input
-                      type="text"
-                      value={editingTitle}
-                      onChange={(e) => setEditingTitle(e.target.value)}
-                      className="flex-1 px-2 py-1 text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded"
-                      autoFocus
-                      onKeyPress={(e) => e.key === 'Enter' && handleSaveTitle(conv.id)}
-                    />
-                    <button
-                      onClick={() => handleSaveTitle(conv.id)}
-                      className="p-1 hover:bg-green-100 dark:hover:bg-green-900 rounded"
-                    >
-                      <Check size={16} className="text-green-600 dark:text-green-400" />
-                    </button>
-                    <button
-                      onClick={handleCancelEdit}
-                      className="p-1 hover:bg-red-100 dark:hover:bg-red-900 rounded"
-                    >
-                      <X size={16} className="text-red-600 dark:text-red-400" />
-                    </button>
+            <div className="relative">
+              {/* Timeline vertical line */}
+              <div className="absolute left-[7px] top-0 bottom-0 w-px bg-neutral-700/50" />
+
+              {groupConversationsByDate(conversations || []).map(([dateLabel, groupConvs]) => (
+                <div key={dateLabel} className="mb-6">
+                  {/* Date separator */}
+                  <div className="text-[9px] font-mono uppercase tracking-widest text-neutral-600 dark:text-neutral-500 mb-3 pl-6">
+                    {dateLabel}
                   </div>
-                ) : (
-                  <div className="flex items-center">
-                    <button
-                      onClick={() => setSelectedConversation(conv.id)}
-                      className="flex-1 text-left px-3 py-2 text-sm"
-                    >
-                      {conv.title || 'New Conversation'}
-                    </button>
-                    <div className="flex items-center gap-1 pr-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => handleEditConversation(conv)}
-                        className="p-1 hover:bg-blue-100 dark:hover:bg-blue-900 rounded"
-                        title="Rename"
-                      >
-                        <Edit2 size={14} className={selectedConversation === conv.id ? 'text-white' : 'text-blue-600 dark:text-blue-400'} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteConversation(conv.id)}
-                        className="p-1 hover:bg-red-100 dark:hover:bg-red-900 rounded"
-                        title="Delete"
-                      >
-                        <Trash2 size={14} className={selectedConversation === conv.id ? 'text-white' : 'text-red-600 dark:text-red-400'} />
-                      </button>
+
+                  {groupConvs.map((conv, index) => (
+                <div
+                  key={conv.id}
+                  className="relative pl-6 pb-4 group"
+                >
+                  {editingConvId === conv.id ? (
+                    <div className="flex flex-col gap-2">
+                      <input
+                        type="text"
+                        value={editingTitle}
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        className="px-2 py-1 text-xs bg-neutral-800 text-neutral-100 border border-neutral-600 rounded font-mono"
+                        autoFocus
+                        onKeyPress={(e) => e.key === 'Enter' && handleSaveTitle(conv.id)}
+                      />
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => handleSaveTitle(conv.id)}
+                          className="flex-1 p-1 bg-green-500/20 hover:bg-green-500/30 border border-green-500/40 rounded text-green-400 text-xs"
+                        >
+                          <Check size={12} />
+                        </button>
+                        <button
+                          onClick={handleCancelEdit}
+                          className="flex-1 p-1 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 rounded text-red-400 text-xs"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            ))
+                  ) : (
+                    <>
+                      {/* Timeline dot */}
+                      <div className={`absolute left-0 top-1 w-[15px] h-[15px] rounded-full border-2 transition-all ${
+                        selectedConversation === conv.id
+                          ? 'bg-cyan-500 border-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.6)]'
+                          : 'bg-neutral-900 border-neutral-600 group-hover:border-cyan-500/50'
+                      }`} />
+
+                      <button
+                        onClick={() => setSelectedConversation(conv.id)}
+                        className="w-full text-left"
+                      >
+                        {/* Date in monospace */}
+                        <div className="text-[10px] font-mono text-neutral-500 uppercase tracking-wider mb-0.5">
+                          {new Date(conv.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit' }).toUpperCase()}
+                        </div>
+
+                        {/* Title */}
+                        <div className={`text-xs leading-tight transition-colors ${
+                          selectedConversation === conv.id
+                            ? 'text-neutral-100 font-medium'
+                            : 'text-neutral-400 group-hover:text-neutral-300'
+                        }`}>
+                          {conv.title || <span className="italic opacity-60">Untitled Session</span>}
+                        </div>
+                      </button>
+
+                      {/* Action buttons - minimal */}
+                      <div className="flex items-center gap-1 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => handleEditConversation(conv)}
+                          className="p-1 hover:bg-neutral-800 rounded text-neutral-500 hover:text-cyan-400"
+                          title="Rename"
+                        >
+                          <Edit2 size={11} strokeWidth={1.5} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteConversation(conv.id, conv.title || 'New Session')}
+                          className="p-1 hover:bg-neutral-800 rounded text-neutral-500 hover:text-red-400"
+                          title="Delete"
+                        >
+                          <Trash2 size={11} strokeWidth={1.5} />
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
 
       {/* Chat area */}
-      <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 flex flex-col">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-600">
-          <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">AI Running Coach</h2>
+      <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg shadow-xl dark:shadow-gray-900/50 flex flex-col border border-gray-200 dark:border-gray-700">
+        <div className="p-4 md:p-5 bg-neutral-900 dark:bg-black border-b border-neutral-700/50">
+          <div className="flex items-center gap-3">
+            {/* Mobile menu button */}
+            <button
+              onClick={() => setShowSidebar(true)}
+              className="md:hidden p-1.5 hover:bg-neutral-800 rounded transition-colors"
+            >
+              <Menu size={18} className="text-neutral-400" strokeWidth={1.5} />
+            </button>
+
+            {/* Desktop expand sidebar button (when collapsed) */}
+            {sidebarCollapsed && !isMobile && (
+              <button
+                onClick={() => setSidebarCollapsed(false)}
+                className="hidden md:flex p-1.5 hover:bg-neutral-800 rounded transition-colors"
+                title="Show conversations"
+              >
+                <ChevronRight size={18} className="text-neutral-400" strokeWidth={1.5} />
+              </button>
+            )}
+
+            <Activity size={20} className="text-cyan-500" strokeWidth={1.5} />
+            <div className="flex-1 min-w-0">
+              <h2 className="text-sm md:text-base font-semibold text-neutral-100 tracking-tight flex items-center gap-2">
+                <span className="truncate">Performance Command Center</span>
+                <span className="text-[9px] md:text-[10px] font-mono font-normal bg-cyan-500/10 text-cyan-400 px-2 py-0.5 border border-cyan-500/20 whitespace-nowrap uppercase tracking-wider">
+                  ACTIVE
+                </span>
+              </h2>
+              <p className="text-[10px] md:text-xs text-neutral-500 font-mono hidden sm:block">Real-time coaching & analysis</p>
+            </div>
+          </div>
           {activityContext && (
-            <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg text-sm">
-              <p className="font-semibold text-blue-900 dark:text-blue-300">📊 Discussing your run:</p>
-              <p className="text-blue-700 dark:text-blue-400">
+            <div className="mt-3 p-3 bg-neutral-800/50 border border-neutral-700/50 text-xs font-mono">
+              <p className="text-cyan-400 mb-1 uppercase tracking-wider text-[10px]">Context Loaded</p>
+              <p className="text-neutral-300">
                 {activityContext.activityName} • {activityContext.distance} km • {activityContext.pace}
-                {activityContext.heartRate && ` • ${Number(activityContext.heartRate).toFixed(0)} bpm avg`}
+                {activityContext.heartRate && ` • ${Number(activityContext.heartRate).toFixed(0)} bpm`}
               </p>
             </div>
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto command-center-scroll p-2 sm:p-4 space-y-3 sm:space-y-4">
           {messagesLoading ? (
             <LoadingDisplay message="Loading conversation..." />
           ) : messagesError ? (
@@ -527,44 +828,92 @@ export default function ChatPage() {
             />
           ) : messages.length === 0 && !isStreaming ? (
             <div className="flex items-center justify-center h-full">
-              <div className="text-center text-gray-500 dark:text-gray-400">
-                <p className="text-lg font-medium mb-2">Start a conversation</p>
-                <p className="text-sm">Ask me anything about your training, nutrition, or running goals!</p>
+              <div className="max-w-2xl">
+                <div className="flex items-center gap-3 mb-6">
+                  <Activity size={32} className="text-cyan-500" strokeWidth={1.5} />
+                  <div>
+                    <h3 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100 tracking-tight">
+                      System Ready
+                    </h3>
+                    <p className="text-sm text-neutral-500 font-mono">Awaiting your input</p>
+                  </div>
+                </div>
+                <div className="border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900/50 p-6">
+                  <p className="text-label-xs uppercase tracking-widest text-tertiary font-mono mb-4">Available Modules</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    <div className="flex items-start gap-2">
+                      <div className="w-1 h-full bg-cyan-500 mt-1"></div>
+                      <div>
+                        <p className="font-semibold text-neutral-900 dark:text-neutral-100">Training Analysis</p>
+                        <p className="text-xs text-neutral-600 dark:text-neutral-400">Plans, workouts, periodization</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <div className="w-1 h-full bg-cyan-500 mt-1"></div>
+                      <div>
+                        <p className="font-semibold text-neutral-900 dark:text-neutral-100">Performance Metrics</p>
+                        <p className="text-xs text-neutral-600 dark:text-neutral-400">Pace, HR, load analysis</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <div className="w-1 h-full bg-cyan-500 mt-1"></div>
+                      <div>
+                        <p className="font-semibold text-neutral-900 dark:text-neutral-100">Nutrition Strategy</p>
+                        <p className="text-xs text-neutral-600 dark:text-neutral-400">Fueling, hydration, recovery</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <div className="w-1 h-full bg-cyan-500 mt-1"></div>
+                      <div>
+                        <p className="font-semibold text-neutral-900 dark:text-neutral-100">Race Preparation</p>
+                        <p className="text-xs text-neutral-600 dark:text-neutral-400">Taper, strategy, execution</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           ) : (
-            <>
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-[70%] rounded-lg px-4 py-3 ${
-                      message.role === 'user'
-                        ? 'bg-strava text-white'
-                        : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
-                    }`}
-                  >
-                    {message.role === 'user' ? (
-                      <p className="whitespace-pre-wrap">{message.content}</p>
-                    ) : (
-                      <div className="prose dark:prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {message.content}
-                        </ReactMarkdown>
-                      </div>
-                    )}
-                  </div>
+            <div className="divide-y divide-neutral-200/20 dark:divide-neutral-700/20">
+              {messages.map((message) => {
+                const currentConv = conversations?.find(c => c.id === selectedConversation);
+                return (
+                  <CommandCenterMessage
+                    key={message.id}
+                    message={message}
+                    conversationTitle={currentConv?.title}
+                  />
+                );
+              })}
+            </div>
+          )}
+
+          {/* Show typing indicator while waiting for response to start */}
+          {isStreaming && !streamingMessage && (
+            <div className="py-4 border-b border-neutral-200/20 dark:border-neutral-700/20">
+              <div className="flex items-start gap-3">
+                <div className="text-label-xs uppercase tracking-widest font-mono mt-1" style={{ color: '#0891b2' }}>
+                  COACH
                 </div>
-              ))}
-            </>
+                <TypingIndicator />
+              </div>
+            </div>
           )}
 
           {streamingMessage && (
-            <div className="flex justify-start">
-              <div className="max-w-[70%] rounded-lg px-4 py-3 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100">
-                <div className="prose dark:prose-invert prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1">
+            <div className="py-6 border-b border-neutral-200/20 dark:border-neutral-700/20 animate-fade-in">
+              <div className="flex items-start gap-3">
+                <div className="text-label-xs uppercase tracking-widest font-mono mt-1" style={{ color: '#0891b2' }}>
+                  COACH
+                </div>
+                <div className="flex-1 prose dark:prose-invert prose-sm max-w-none
+                  prose-p:text-neutral-700 dark:prose-p:text-neutral-300 prose-p:leading-relaxed
+                  prose-headings:text-neutral-900 dark:prose-headings:text-neutral-100 prose-headings:font-semibold prose-headings:tracking-tight
+                  prose-strong:text-neutral-900 dark:prose-strong:text-neutral-100 prose-strong:font-semibold
+                  prose-ul:text-neutral-700 dark:prose-ul:text-neutral-300
+                  prose-ol:text-neutral-700 dark:prose-ol:text-neutral-300
+                  prose-code:text-cyan-600 dark:prose-code:text-cyan-400 prose-code:font-mono prose-code:text-xs
+                ">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {streamingMessage}
                   </ReactMarkdown>
@@ -599,7 +948,10 @@ export default function ChatPage() {
           <div ref={messagesEndRef} />
         </div>
 
-        <div className="p-4 border-t border-gray-200 dark:border-gray-600">
+        <div
+          className="p-3 md:p-4 border-t border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800"
+          style={{ paddingBottom: keyboardHeight > 0 ? `${keyboardHeight + 12}px` : undefined }}
+        >
           <div className="flex gap-2 items-end">
             <textarea
               value={input}
@@ -610,7 +962,7 @@ export default function ChatPage() {
                   handleSendMessage();
                 }
               }}
-              placeholder="Ask your coach anything... (Shift+Enter for new line)"
+              placeholder={isMobile ? "Ask your coach..." : "Ask your coach anything... (Shift+Enter for new line)"}
               className="flex-1 input resize-none min-h-[44px] max-h-[200px] overflow-y-auto"
               rows={1}
               disabled={isStreaming}
@@ -634,6 +986,108 @@ export default function ChatPage() {
           </div>
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmation.show && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={cancelDelete}
+        >
+          <div
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full p-6 animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                <Trash2 className="text-red-600 dark:text-red-400" size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">
+                  Delete Conversation?
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  This action cannot be undone
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 mb-6">
+              <p className="text-sm text-gray-700 dark:text-gray-300 mb-1">
+                You're about to delete:
+              </p>
+              <p className="font-semibold text-gray-900 dark:text-gray-100 truncate">
+                "{deleteConfirmation.title}"
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={cancelDelete}
+                className="flex-1 px-4 py-2.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100 font-medium rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-medium rounded-lg transition-all shadow-md hover:shadow-lg"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete All Confirmation Modal */}
+      {deleteAllConfirmation && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={cancelDeleteAll}
+        >
+          <div
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full p-6 animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                <Trash2 className="text-red-600 dark:text-red-400" size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">
+                  Delete All Conversations?
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  This action cannot be undone
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-lg p-4 mb-6">
+              <p className="text-sm text-red-800 dark:text-red-300 font-medium">
+                ⚠️ You're about to permanently delete all {conversations?.length || 0} conversation{conversations && conversations.length > 1 ? 's' : ''}.
+              </p>
+              <p className="text-xs text-red-700 dark:text-red-400 mt-2">
+                All messages and conversation history will be lost forever.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={cancelDeleteAll}
+                className="flex-1 px-4 py-2.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100 font-medium rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteAll}
+                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-medium rounded-lg transition-all shadow-md hover:shadow-lg"
+              >
+                Delete All
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -25,7 +25,8 @@ export async function query(
   try {
     const res = await pool.query(text, params);
     const duration = Date.now() - start;
-    console.log('Executed query', { text, duration, rows: res.rowCount });
+    // Disabled verbose query logging - uncomment below for debugging
+    // console.log('Executed query', { text, duration, rows: res.rowCount });
     return res;
   } catch (error) {
     console.error('Database query error:', { text, error });

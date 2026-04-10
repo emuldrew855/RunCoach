@@ -9,6 +9,21 @@ export async function getPlannedWorkoutsByPlan(planId: number): Promise<PlannedW
   return result.rows;
 }
 
+/**
+ * Get planned workouts with date as text to avoid pg driver timezone conversion issues
+ * Used for peak week calculations where exact date matching is critical
+ */
+export async function getPlannedWorkoutsByPlanWithDateText(planId: number): Promise<any[]> {
+  const result = await query(
+    `SELECT *, scheduled_date::text as date_text
+     FROM planned_workouts
+     WHERE training_plan_id = $1
+     ORDER BY scheduled_date ASC`,
+    [planId]
+  );
+  return result.rows;
+}
+
 export async function getPlannedWorkoutsByDateRange(
   userId: number,
   startDate: Date,
@@ -18,7 +33,8 @@ export async function getPlannedWorkoutsByDateRange(
     `SELECT pw.* FROM planned_workouts pw
      INNER JOIN training_plans tp ON pw.training_plan_id = tp.id
      WHERE pw.user_id = $1
-     AND pw.scheduled_date BETWEEN $2 AND $3
+     AND pw.scheduled_date >= $2
+     AND pw.scheduled_date < $3
      AND tp.is_active = true
      ORDER BY pw.scheduled_date ASC`,
     [userId, startDate, endDate]

@@ -1,8 +1,9 @@
 import { Request, Response } from 'express';
-import { getActivitiesByUserId, getActivityStats } from '../models/Activity';
+import { getActivitiesByUserId, getActivityStats, getActivityByIdForUser, getActivityInsights, getLinkedPlannedWorkout } from '../models/Activity';
 import { syncActivities } from '../services/activityService';
 import { getHRZoneSummary } from '../models/ActivityHRZone';
 import { getActivityZones } from '../services/stravaService';
+import { recomputeDailyInsight } from '../services/dailyInsightService';
 import { query } from '../config/database';
 
 export async function getActivities(req: Request, res: Response): Promise<void> {
@@ -16,6 +17,89 @@ export async function getActivities(req: Request, res: Response): Promise<void> 
   } catch (error) {
     console.error('Get activities error:', error);
     res.status(500).json({ error: 'Failed to get activities' });
+  }
+}
+
+export async function getActivityDetail(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    const activityId = parseInt(req.params.id);
+    const refresh = req.query.refresh === 'true';
+
+    if (!activityId || isNaN(activityId)) {
+      res.status(400).json({ error: 'Invalid activity ID' });
+      return;
+    }
+
+    const activity = await getActivityByIdForUser(activityId, userId);
+
+    if (!activity) {
+      res.status(404).json({ error: 'Activity not found' });
+      return;
+    }
+
+    // Get linked planned workout (if this activity was linked to a workout)
+    const plannedWorkout = await getLinkedPlannedWorkout(activityId);
+
+    // If refresh is requested, recompute insights with the current planned workout data
+    if (refresh) {
+      console.log(`🔄 Refreshing insights for activity ${activityId}...`);
+      await recomputeDailyInsight(userId, activityId);
+    }
+
+    // Get pre-computed insights for this activity
+    const insights = await getActivityInsights(activityId);
+
+    res.json({
+      activity,
+      insights,
+      plannedWorkout,
+    });
+  } catch (error) {
+    console.error('Get activity detail error:', error);
+    res.status(500).json({ error: 'Failed to get activity details' });
+  }
+}
+
+export async function recomputeActivityInsights(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    const activityId = parseInt(req.params.id);
+
+    if (!activityId || isNaN(activityId)) {
+      res.status(400).json({ error: 'Invalid activity ID' });
+      return;
+    }
+
+    // Verify the activity belongs to this user
+    const activity = await getActivityByIdForUser(activityId, userId);
+    if (!activity) {
+      res.status(404).json({ error: 'Activity not found' });
+      return;
+    }
+
+    // Recompute insights
+    const insight = await recomputeDailyInsight(userId, activityId);
+
+    if (!insight) {
+      res.status(500).json({ error: 'Failed to recompute insights' });
+      return;
+    }
+
+    res.json({
+      message: 'Insights recomputed successfully',
+      insights: {
+        pacing: insight.pacing,
+        hrBehavior: insight.hrBehavior,
+        effort: insight.effort,
+        compliance: insight.compliance,
+        risks: insight.risks,
+        coachingPoints: insight.coachingPoints,
+      },
+    });
+  } catch (error) {
+    console.error('Recompute insights error:', error);
+    res.status(500).json({ error: 'Failed to recompute insights' });
   }
 }
 

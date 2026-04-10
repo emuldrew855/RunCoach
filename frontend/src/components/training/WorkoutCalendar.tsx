@@ -5,12 +5,15 @@ import moment from 'moment';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import 'react-big-calendar/lib/addons/dragAndDrop/styles.css';
 import { useNavigate } from 'react-router-dom';
-import { trainingPlanAPI, activitiesAPI } from '../../services/api';
+import { trainingPlanAPI, activitiesAPI, coachingAPI } from '../../services/api';
 import toast from 'react-hot-toast';
 import { usePreferences } from '../../context/PreferencesContext';
 import { CarbLoadingModal } from './CarbLoadingModal';
 import { useAuth } from '../../context/AuthContext';
-import { ChevronDown, ChevronUp, MessageCircle } from 'lucide-react';
+import { ChevronDown, ChevronUp, MessageCircle, Calendar as CalendarIcon, List } from 'lucide-react';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { MobileAgendaView } from '../mobile/MobileAgendaView';
+import { FloatingActionButton } from '../mobile/FloatingActionButton';
 
 const localizer = momentLocalizer(moment);
 const DragAndDropCalendar = withDragAndDrop(Calendar);
@@ -29,16 +32,30 @@ interface WorkoutEvent extends Event {
   distance_meters?: number;
   moving_time_seconds?: number;
   average_speed?: number;
+  executionScore?: number | null;
 }
 
 const workoutTypeColors: Record<string, string> = {
-  easy: '#10b981', // green
-  long_run: '#3b82f6', // blue
-  tempo: '#fbbf24', // yellow
-  intervals: '#ef4444', // red
-  recovery: '#6366f1', // indigo
-  race: '#8b5cf6', // purple
-  rest: '#6b7280', // gray
+  easy: '#059669', // Deeper green
+  long_run: '#2563eb', // Deeper blue
+  tempo: '#d97706', // Deeper amber
+  intervals: '#dc2626', // Deeper red
+  recovery: '#7c3aed', // Deeper purple
+  race: '#db2777', // Deeper pink
+  rest: '#52525b', // Deeper gray
+  strength: '#0891b2', // Deeper cyan
+};
+
+// Darker variants for gradients
+const workoutTypeColorsDark: Record<string, string> = {
+  easy: '#047857',
+  long_run: '#1e40af',
+  tempo: '#b45309',
+  intervals: '#b91c1c',
+  recovery: '#6d28d9',
+  race: '#be185d',
+  rest: '#3f3f46',
+  strength: '#0e7490',
 };
 
 const WORKOUT_TYPES = [
@@ -55,9 +72,11 @@ export const WorkoutCalendar: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { preferences, convertDistance, distanceUnit, paceUnit } = usePreferences();
+  const isMobile = useIsMobile();
   const [workouts, setWorkouts] = useState<any[]>([]);
   const [activities, setActivities] = useState<any[]>([]);
   const [activePlan, setActivePlan] = useState<any>(null);
+  const [executionScores, setExecutionScores] = useState<Map<number, number | null>>(new Map());
   const [loading, setLoading] = useState(true);
   const [selectedWorkout, setSelectedWorkout] = useState<any>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -67,6 +86,7 @@ export const WorkoutCalendar: React.FC = () => {
   const [showCarbModal, setShowCarbModal] = useState(false);
   const [selectedCarbDate, setSelectedCarbDate] = useState<Date | null>(null);
   const [legendExpanded, setLegendExpanded] = useState(false);
+  const [viewMode, setViewMode] = useState<'calendar' | 'agenda'>('calendar');
   const [editFormData, setEditFormData] = useState({
     workout_type: 'easy',
     name: '',
@@ -89,6 +109,13 @@ export const WorkoutCalendar: React.FC = () => {
     loadData();
   }, []);
 
+  // Set default view mode to agenda on mobile
+  useEffect(() => {
+    if (isMobile) {
+      setViewMode('agenda');
+    }
+  }, [isMobile]);
+
   useEffect(() => {
     // Update moment locale to change week start day
     if (preferences.weekStartsOn === 'monday') {
@@ -109,8 +136,22 @@ export const WorkoutCalendar: React.FC = () => {
   }, [preferences.weekStartsOn === 'monday']);
 
   const loadData = async () => {
-    await Promise.all([loadWorkouts(), loadActivities(), loadActivePlan()]);
+    await Promise.all([loadWorkouts(), loadActivities(), loadActivePlan(), loadExecutionScores()]);
     setLoading(false);
+  };
+
+  const loadExecutionScores = async () => {
+    try {
+      const response = await coachingAPI.getWeeklyExecution();
+      const summary = response.data.summary;
+      const scores = new Map<number, number | null>();
+      summary.workouts.forEach((w: any) => {
+        scores.set(w.workoutId, w.executionScore);
+      });
+      setExecutionScores(scores);
+    } catch (error) {
+      console.error('Failed to load execution scores:', error);
+    }
   };
 
   const loadActivePlan = async () => {
@@ -150,19 +191,50 @@ export const WorkoutCalendar: React.FC = () => {
     }
   };
 
+  // Helper to parse date strings as local dates (avoiding timezone shifts)
+  const parseLocalDate = (dateString: string): Date => {
+    // If it's just a date (YYYY-MM-DD), parse as local midnight
+    if (dateString && dateString.length === 10 && dateString.includes('-')) {
+      const [year, month, day] = dateString.split('-').map(Number);
+      return new Date(year, month - 1, day);
+    }
+    // For full ISO strings with time, handle timezone correctly
+    const date = new Date(dateString);
+    // If the date string doesn't have time info, it was interpreted as UTC
+    // Convert it to local date at noon to avoid any DST edge cases
+    if (!dateString.includes('T')) {
+      return new Date(date.getTime() + date.getTimezoneOffset() * 60000);
+    }
+    return date;
+  };
+
   const events: WorkoutEvent[] = useMemo(() => {
     const plannedEvents = workouts.map((workout) => {
       const distance = workout.target_distance_meters
         ? `${convertDistance(parseFloat(workout.target_distance_meters))}${distanceUnit}`
         : '';
       const name = workout.name || workout.workout_type.replace('_', ' ');
+      const execScore = executionScores.get(workout.id);
+
+      // Add execution indicator to title for completed workouts
+      let titlePrefix = '📋';
+      if (workout.completion_status === 'completed') {
+        if (execScore !== undefined && execScore !== null) {
+          titlePrefix = execScore >= 85 ? '✅' : execScore >= 70 ? '🟢' : execScore >= 50 ? '🟡' : '🔴';
+        } else {
+          titlePrefix = '✓';
+        }
+      }
+
+      // Parse the scheduled_date as local date to avoid timezone issues
+      const scheduledDate = parseLocalDate(workout.scheduled_date);
 
       return {
         id: workout.id,
         resourceId: `workout-${workout.id}`, // Unique identifier for calendar
-        title: `📋 ${distance ? distance + ' ' : ''}${name}`,
-        start: new Date(workout.scheduled_date),
-        end: new Date(workout.scheduled_date),
+        title: `${titlePrefix} ${distance ? distance + ' ' : ''}${name}`,
+        start: scheduledDate,
+        end: scheduledDate,
         workout_type: workout.workout_type,
         completion_status: workout.completion_status,
         target_distance_meters: workout.target_distance_meters,
@@ -171,6 +243,7 @@ export const WorkoutCalendar: React.FC = () => {
         target_hr_zone: workout.target_hr_zone,
         description: workout.description,
         isActivity: false,
+        executionScore: execScore,
       };
     });
 
@@ -188,15 +261,17 @@ export const WorkoutCalendar: React.FC = () => {
       isActivity: true,
     }));
 
-    console.log('📅 Calendar events:', {
-      plannedCount: plannedEvents.length,
-      activityCount: activityEvents.length,
-      totalEvents: plannedEvents.length + activityEvents.length,
-      sampleDay: activities.length > 0 ? new Date(activities[0].start_date).toISOString().split('T')[0] : 'none'
+    console.log('Calendar Events Debug:', {
+      totalWorkouts: workouts.length,
+      totalActivities: activities.length,
+      plannedEvents: plannedEvents.length,
+      activityEvents: activityEvents.length,
+      sampleActivity: activityEvents[0],
+      allEvents: [...plannedEvents, ...activityEvents].length
     });
 
     return [...plannedEvents, ...activityEvents];
-  }, [workouts, activities, convertDistance, distanceUnit]);
+  }, [workouts, activities, convertDistance, distanceUnit, executionScores]);
 
   // Calculate weekly and monthly stats (completed and planned)
   const stats = useMemo(() => {
@@ -248,19 +323,6 @@ export const WorkoutCalendar: React.FC = () => {
       (sum, w) => sum + parseFloat(w.target_distance_meters),
       0
     ) / 1000;
-
-    console.log('This week stats:', {
-      startOfWeek: startOfWeek.toISOString(),
-      endOfWeek: endOfWeek.toISOString(),
-      weeklyWorkouts: weeklyWorkouts.length,
-      workoutDistances: weeklyWorkouts.map(w => ({
-        name: w.name,
-        date: w.scheduled_date,
-        distance_meters: w.target_distance_meters,
-        distance_km: parseFloat(w.target_distance_meters) / 1000
-      })),
-      totalPlannedKm: weeklyPlannedDistance
-    });
 
     return {
       weeklyDistance: weeklyDistance.toFixed(1),
@@ -329,7 +391,6 @@ export const WorkoutCalendar: React.FC = () => {
       weeks[weekKey] += distance / 1000;
     });
 
-    console.log('✅ Weekly totals calculated:', weeks);
     return weeks;
   }, [activities, preferences.weekStartsOn === 'monday']);
 
@@ -356,13 +417,6 @@ export const WorkoutCalendar: React.FC = () => {
       weeks[weekKey] += distance / 1000;
     });
 
-    console.log('✅ Weekly planned totals calculated:', weeks);
-    console.log('All workouts with distances:', validWorkouts.map(w => ({
-      name: w.name,
-      date: w.scheduled_date,
-      distance_meters: w.target_distance_meters,
-      distance_km: parseFloat(w.target_distance_meters) / 1000
-    })));
     return weeks;
   }, [workouts, preferences.weekStartsOn === 'monday']);
 
@@ -503,34 +557,87 @@ export const WorkoutCalendar: React.FC = () => {
 
   const eventStyleGetter = (event: WorkoutEvent) => {
     if (event.isActivity) {
-      // Strava activities - solid green with bold border, prefix with icon
+      // Completed activities - gradient with performance indicator
       return {
         style: {
-          backgroundColor: '#10b981',
-          border: '2px solid #059669',
+          background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
           color: 'white',
-          borderRadius: '3px',
-          fontSize: '11px',
-          padding: '3px 5px',
-          fontWeight: '600',
+          opacity: 1,
+          border: 'none',
         },
       };
     }
 
-    // Planned workouts
-    const backgroundColor = workoutTypeColors[event.workout_type] || '#6b7280';
+    // Planned workouts - intensity-based gradients
+    const baseColor = workoutTypeColors[event.workout_type] || '#6b7280';
+    const darkColor = workoutTypeColorsDark[event.workout_type] || '#52525b';
     const isCompleted = event.completion_status === 'completed';
     const isSkipped = event.completion_status === 'skipped';
 
+    if (isSkipped) {
+      return {
+        style: {
+          background: 'linear-gradient(135deg, #71717a 0%, #52525b 100%)',
+          color: '#a1a1aa',
+          opacity: 0.4,
+          textDecoration: 'line-through',
+          border: 'none',
+        },
+      };
+    }
+
+    // For completed workouts with execution scores, color based on score
+    if (isCompleted && event.executionScore !== undefined && event.executionScore !== null) {
+      const score = event.executionScore;
+      if (score >= 85) {
+        // Excellent execution - green
+        return {
+          style: {
+            background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+            color: 'white',
+            opacity: 1,
+            border: '2px solid #10b981',
+          },
+        };
+      } else if (score >= 70) {
+        // Good execution - blue-green
+        return {
+          style: {
+            background: 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
+            color: 'white',
+            opacity: 1,
+            border: '2px solid #06b6d4',
+          },
+        };
+      } else if (score >= 50) {
+        // Fair execution - amber
+        return {
+          style: {
+            background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)',
+            color: 'white',
+            opacity: 1,
+            border: '2px solid #f59e0b',
+          },
+        };
+      } else {
+        // Needs work - red
+        return {
+          style: {
+            background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)',
+            color: 'white',
+            opacity: 1,
+            border: '2px solid #ef4444',
+          },
+        };
+      }
+    }
+
     return {
       style: {
-        backgroundColor: isCompleted ? backgroundColor : isSkipped ? '#9ca3af' : backgroundColor,
-        opacity: isCompleted ? 1 : isSkipped ? 0.5 : 0.7,
+        background: `linear-gradient(135deg, ${baseColor} 0%, ${darkColor} 100%)`,
         color: 'white',
-        border: '1.5px dashed rgba(255,255,255,0.5)',
-        borderRadius: '3px',
-        fontSize: '11px',
-        padding: '3px 5px',
+        opacity: isCompleted ? 1 : 0.75,
+        border: isCompleted ? 'none' : '1px dashed rgba(255, 255, 255, 0.3)',
       },
     };
   };
@@ -592,11 +699,8 @@ export const WorkoutCalendar: React.FC = () => {
     e.preventDefault();
 
     try {
-      console.log('🔄 Creating workout...');
       const response = await trainingPlanAPI.getActivePlan();
       const activePlan = response.data.plan;
-
-      console.log('📋 Active plan:', activePlan);
 
       if (!activePlan) {
         toast.error('Please upload a training plan first');
@@ -617,20 +721,13 @@ export const WorkoutCalendar: React.FC = () => {
           : undefined,
       };
 
-      console.log('📝 Workout data:', workoutData);
-
-      const createResponse = await trainingPlanAPI.createWorkout(workoutData);
-      console.log('✅ Workout created:', createResponse.data);
+      await trainingPlanAPI.createWorkout(workoutData);
 
       toast.success('Workout created successfully');
       setShowCreateModal(false);
-
-      console.log('🔄 Reloading data...');
       await loadData();
-      console.log('✅ Data reloaded');
     } catch (error: any) {
-      console.error('❌ Error creating workout:', error);
-      console.error('Error response:', error.response?.data);
+      console.error('Error creating workout:', error.response?.data || error.message);
       toast.error(error.response?.data?.error || 'Failed to create workout');
     }
   };
@@ -660,23 +757,30 @@ export const WorkoutCalendar: React.FC = () => {
       return;
     }
 
-    // Prevent dragging if the workout is completed
+    // Don't allow moving completed workouts
     if (event.completion_status === 'completed') {
       toast.error('Cannot move completed workouts');
       return;
     }
 
     try {
+      // Format date as YYYY-MM-DD to avoid timezone issues
+      // Using local date components to ensure the date shown is the date saved
+      const year = start.getFullYear();
+      const month = String(start.getMonth() + 1).padStart(2, '0');
+      const day = String(start.getDate()).padStart(2, '0');
+      const dateString = `${year}-${month}-${day}`;
+
       // Update the workout's scheduled date
       await trainingPlanAPI.updateWorkout(event.id, {
-        scheduled_date: start.toISOString(),
+        scheduled_date: dateString,
       });
 
       toast.success('Workout rescheduled');
       loadData();
-    } catch (error) {
+    } catch (error: any) {
       toast.error('Failed to reschedule workout');
-      console.error('Error rescheduling workout:', error);
+      console.error('Error rescheduling workout:', error.response?.data || error.message);
     }
   };
 
@@ -736,9 +840,25 @@ export const WorkoutCalendar: React.FC = () => {
     const endOfWeek = new Date(startOfWeek);
     endOfWeek.setDate(startOfWeek.getDate() + 6);
 
-    // Store context for chat page to pick up
+    // Store context for chat page to pick up - focuses on completed workouts and progress
     sessionStorage.setItem('chatContext', JSON.stringify({
       type: 'weekly_analysis',
+      weekStart: startOfWeek.toISOString(),
+      weekEnd: endOfWeek.toISOString(),
+    }));
+    // Navigate to chat
+    navigate('/chat');
+  };
+
+  const handlePlanReview = () => {
+    const now = new Date();
+    const startOfWeek = getWeekStart(now);
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+
+    // Store context for chat page to pick up - focuses on planned workout structure
+    sessionStorage.setItem('chatContext', JSON.stringify({
+      type: 'planned_week_review',
       weekStart: startOfWeek.toISOString(),
       weekEnd: endOfWeek.toISOString(),
     }));
@@ -797,11 +917,11 @@ export const WorkoutCalendar: React.FC = () => {
           {/* Completed */}
           <div>
             <p className="text-xs text-green-600 dark:text-green-400 mb-1">Completed</p>
-            <div className="flex items-baseline gap-2">
-              <p className="text-3xl font-bold text-green-600 dark:text-green-400">
+            <div className="flex items-baseline gap-1 sm:gap-2">
+              <p className="text-2xl sm:text-3xl font-bold text-green-600 dark:text-green-400">
                 {convertDistance(parseFloat(stats.weeklyDistance) * 1000)}
               </p>
-              <span className="text-sm text-slate-600 dark:text-slate-400">{distanceUnit}</span>
+              <span className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">{distanceUnit}</span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-500 mt-1">
               {stats.weeklyRuns} {stats.weeklyRuns === 1 ? 'run' : 'runs'}
@@ -811,11 +931,11 @@ export const WorkoutCalendar: React.FC = () => {
           {/* Planned */}
           <div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Planned</p>
-            <div className="flex items-baseline gap-2">
-              <p className="text-3xl font-bold text-slate-700 dark:text-slate-300">
+            <div className="flex items-baseline gap-1 sm:gap-2">
+              <p className="text-2xl sm:text-3xl font-bold text-slate-700 dark:text-slate-300">
                 {convertDistance(parseFloat(stats.weeklyPlannedDistance) * 1000)}
               </p>
-              <span className="text-sm text-slate-600 dark:text-slate-400">{distanceUnit}</span>
+              <span className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">{distanceUnit}</span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-500 mt-1">
               {stats.weeklyPlannedWorkouts} {stats.weeklyPlannedWorkouts === 1 ? 'workout' : 'workouts'}
@@ -823,31 +943,106 @@ export const WorkoutCalendar: React.FC = () => {
           </div>
         </div>
 
-        {/* Weekly Analysis Button */}
-        <button
-          onClick={handleWeeklyAnalysis}
-          className="w-full mt-4 px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-medium rounded-lg transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
-        >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+        {/* Analysis Buttons */}
+        <div className="flex gap-2 mt-4">
+          {/* Weekly Progress Analysis */}
+          <button
+            onClick={handleWeeklyAnalysis}
+            className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-medium rounded-lg transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+            title="Analyze completed workouts, progress, and adherence"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-            />
-          </svg>
-          Analyze Training Week
-        </button>
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+              />
+            </svg>
+            <span className="hidden sm:inline">Weekly Progress</span>
+            <span className="sm:hidden">Progress</span>
+          </button>
+
+          {/* Planned Week Review */}
+          <button
+            onClick={handlePlanReview}
+            className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white font-medium rounded-lg transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+            title="Review planned workout structure, balance, and quality"
+          >
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
+              />
+            </svg>
+            <span className="hidden sm:inline">Review Plan</span>
+            <span className="sm:hidden">Plan</span>
+          </button>
+        </div>
       </div>
 
-      <div className="bg-white dark:bg-slate-800 rounded-lg p-4 mb-8">
-        <div style={{ height: '820px', position: 'relative', overflow: 'hidden' }}>
-          <DragAndDropCalendar
+      {/* View Toggle for Desktop Only */}
+      {!isMobile && (
+        <div className="bg-white dark:bg-slate-800 rounded-lg p-3 mb-4">
+          <div className="flex items-center justify-center gap-2">
+            <button
+              onClick={() => setViewMode('calendar')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                viewMode === 'calendar'
+                  ? 'bg-strava text-white'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+              }`}
+            >
+              <CalendarIcon size={18} />
+              Calendar View
+            </button>
+            <button
+              onClick={() => setViewMode('agenda')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                viewMode === 'agenda'
+                  ? 'bg-strava text-white'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+              }`}
+            >
+              <List size={18} />
+              List View
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Agenda View or Desktop Calendar View */}
+      {(isMobile || viewMode === 'agenda') ? (
+        <div className="bg-white dark:bg-slate-800 rounded-lg overflow-hidden mb-8" style={{ height: isMobile ? 'calc(100dvh - 16rem)' : '800px' }}>
+          <MobileAgendaView
+            workouts={workouts}
+            activities={activities}
+            onWorkoutClick={handleSelectEvent}
+            onActivityClick={(activity) => navigate(`/activity/${activity.id}`)}
+            onAddWorkout={(date) => {
+              setSelectedDate(date);
+              setShowCreateModal(true);
+            }}
+            currentMonth={currentMonth}
+            onMonthChange={setCurrentMonth}
+          />
+        </div>
+      ) : (
+        <div className="bg-white dark:bg-slate-800 rounded-lg p-4 mb-8">
+          <div style={{ height: '1000px', position: 'relative', overflow: 'hidden' }}>
+            <DragAndDropCalendar
             key={preferences.weekStartsOn === 'monday' ? 'monday' : 'sunday'}
             localizer={localizer}
             events={events}
@@ -863,7 +1058,7 @@ export const WorkoutCalendar: React.FC = () => {
             selectable
             draggableAccessor={(event: any) => {
               const e = event as WorkoutEvent;
-              return !e.isActivity && e.completion_status !== 'completed';
+              return !e.isActivity;
             }}
             resizable={false}
             defaultView="month"
@@ -882,8 +1077,10 @@ export const WorkoutCalendar: React.FC = () => {
           />
         </div>
       </div>
+      )}
 
-      {/* Weekly Breakdown */}
+      {/* Weekly Breakdown - Only show on desktop and calendar view */}
+      {!isMobile && viewMode === 'calendar' && (
       <div className="card">
         <h3 className="text-heading-xs mb-4 text-neutral-900 dark:text-neutral-100">
           Weekly Totals - {currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
@@ -955,6 +1152,7 @@ export const WorkoutCalendar: React.FC = () => {
           ))}
         </div>
       </div>
+      )}
 
       <div className="card-subtle">
         <button
@@ -973,50 +1171,102 @@ export const WorkoutCalendar: React.FC = () => {
           <div className="mt-4 space-y-4">
             {/* Workout Types */}
             <div>
-              <p className="text-xs font-medium text-secondary uppercase mb-2">Workout Types</p>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {Object.entries(workoutTypeColors).map(([type, color]) => (
-                  <div key={type} className="flex items-center gap-2">
-                    <div
-                      className="w-3 h-3 rounded border border-dashed border-white/40 flex-shrink-0"
-                      style={{ backgroundColor: color, opacity: 0.6 }}
-                    />
-                    <span className="text-xs text-secondary capitalize">
-                      {type.replace('_', ' ')}
-                    </span>
-                  </div>
-                ))}
+              <p className="text-label-xs uppercase text-tertiary tracking-wider mb-3">Workout Types (Planned)</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {Object.entries(workoutTypeColors).map(([type, color]) => {
+                  const darkColor = workoutTypeColorsDark[type];
+                  return (
+                    <div key={type} className="flex items-center gap-2">
+                      <div
+                        className="w-4 h-4 rounded flex-shrink-0 shadow-sm"
+                        style={{
+                          background: `linear-gradient(135deg, ${color} 0%, ${darkColor} 100%)`,
+                          opacity: 0.85,
+                          border: '1px dashed rgba(255, 255, 255, 0.3)'
+                        }}
+                      />
+                      <span className="text-xs text-neutral-700 dark:text-neutral-300 capitalize font-medium">
+                        {type.replace('_', ' ')}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Execution Scores */}
+            <div className="pt-3 border-t border-neutral-200 dark:border-neutral-700">
+              <p className="text-label-xs uppercase text-tertiary tracking-wider mb-3">Execution Score (Completed Workouts)</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="flex items-center gap-2">
                   <div
-                    className="w-3 h-3 rounded flex-shrink-0"
-                    style={{ backgroundColor: '#10b981', border: '2px solid #059669' }}
+                    className="w-4 h-4 rounded flex-shrink-0 shadow-sm"
+                    style={{ background: 'linear-gradient(135deg, #059669 0%, #047857 100%)', border: '2px solid #10b981' }}
                   />
-                  <span className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
-                    Completed
+                  <span className="text-xs text-green-700 dark:text-green-300 font-medium">
+                    ✅ Excellent (85%+)
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-4 h-4 rounded flex-shrink-0 shadow-sm"
+                    style={{ background: 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)', border: '2px solid #06b6d4' }}
+                  />
+                  <span className="text-xs text-cyan-700 dark:text-cyan-300 font-medium">
+                    🟢 Good (70-84%)
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-4 h-4 rounded flex-shrink-0 shadow-sm"
+                    style={{ background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)', border: '2px solid #f59e0b' }}
+                  />
+                  <span className="text-xs text-amber-700 dark:text-amber-300 font-medium">
+                    🟡 Fair (50-69%)
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-4 h-4 rounded flex-shrink-0 shadow-sm"
+                    style={{ background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)', border: '2px solid #ef4444' }}
+                  />
+                  <span className="text-xs text-red-700 dark:text-red-300 font-medium">
+                    🔴 Needs Work (&lt;50%)
                   </span>
                 </div>
               </div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
+                Execution score measures how closely you followed the plan (pace, distance, HR zone).
+              </p>
             </div>
 
             {/* Training Phases - Only if applicable */}
             {activePlan?.identify_peaks && (
-              <div className="pt-2 border-t border-neutral-200 dark:border-neutral-700">
-                <p className="text-xs font-medium text-secondary uppercase mb-2">Training Phases</p>
+              <div className="pt-3 border-t border-neutral-200 dark:border-neutral-700">
+                <p className="text-label-xs uppercase text-tertiary tracking-wider mb-3">Training Phases</p>
                 <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-2">
-                    <div className="px-2 py-0.5 bg-orange-500 text-white text-xs font-bold rounded-full whitespace-nowrap">
-                      🏔️ PEAK
+                  <div className="flex items-center gap-3">
+                    <div className="px-3 py-1 text-white text-[9px] font-bold uppercase tracking-wider whitespace-nowrap shadow-sm" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}>
+                      ⚡ PEAK WEEK
                     </div>
-                    <span className="text-xs text-secondary">
+                    <span className="text-xs text-neutral-700 dark:text-neutral-300">
                       {activePlan.peak_weeks_count || 1} highest volume {(activePlan.peak_weeks_count || 1) === 1 ? 'week' : 'weeks'}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="px-2 py-0.5 bg-purple-500 text-white text-xs font-bold rounded-full whitespace-nowrap">
+                  <div className="flex items-center gap-3">
+                    <div className="px-3 py-1 text-white text-[9px] font-bold uppercase tracking-wider whitespace-nowrap shadow-sm" style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)' }}>
                       📉 TAPER
                     </div>
-                    <span className="text-xs text-secondary">
+                    <span className="text-xs text-neutral-700 dark:text-neutral-300">
                       Final {activePlan.taper_weeks} weeks before race
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="px-3 py-1 text-white text-[9px] font-bold uppercase tracking-wider whitespace-nowrap shadow-sm" style={{ background: 'linear-gradient(135deg, #FC4C02 0%, #E04300 100%)' }}>
+                      → THIS WEEK
+                    </div>
+                    <span className="text-xs text-neutral-700 dark:text-neutral-300">
+                      Current training week
                     </span>
                   </div>
                 </div>
@@ -1025,14 +1275,14 @@ export const WorkoutCalendar: React.FC = () => {
 
             {/* Nutrition - Only if applicable */}
             {activePlan?.enable_carb_loading && (
-              <div className="pt-2 border-t border-neutral-200 dark:border-neutral-700">
-                <p className="text-xs font-medium text-secondary uppercase mb-2">Nutrition</p>
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded bg-yellow-300 dark:bg-yellow-600 flex items-center justify-center text-xs border-2 border-yellow-500 dark:border-yellow-700 flex-shrink-0">
-                    🍝
+              <div className="pt-3 border-t border-neutral-200 dark:border-neutral-700">
+                <p className="text-label-xs uppercase text-tertiary tracking-wider mb-3">Fuel Strategy</p>
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-6 flex items-center justify-center text-base flex-shrink-0">
+                    ⚡
                   </div>
-                  <span className="text-xs text-secondary">
-                    Carb-Loading (before 20km+ runs or half-marathon+ races)
+                  <span className="text-xs text-neutral-700 dark:text-neutral-300">
+                    Carb-loading days before 20km+ runs or half-marathon+ races
                   </span>
                 </div>
               </div>
@@ -1713,6 +1963,19 @@ export const WorkoutCalendar: React.FC = () => {
           />
         );
       })()}
+
+      {/* Floating Action Button for Mobile */}
+      {isMobile && (
+        <FloatingActionButton
+          onClick={() => {
+            setSelectedDate(new Date());
+            setShowCreateModal(true);
+          }}
+          icon={<span className="text-2xl">+</span>}
+          position="bottom-right"
+          color="primary"
+        />
+      )}
     </div>
   );
 };

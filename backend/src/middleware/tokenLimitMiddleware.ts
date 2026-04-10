@@ -86,7 +86,7 @@ export async function checkTokenLimit(
 
     if (limitExceeded) {
       console.warn(`⚠️ User ${userId} exceeded token limit: ${tokensUsed24h}/${DAILY_TOKEN_LIMIT}`);
-      return res.status(429).json({
+      res.status(429).json({
         success: false,
         error: 'Daily token limit exceeded',
         code: 'TOKEN_LIMIT_EXCEEDED',
@@ -98,6 +98,7 @@ export async function checkTokenLimit(
           message: 'You have reached your daily AI usage limit. This helps us manage costs. Your limit will reset in 24 hours from your first message today.',
         },
       });
+      return;
     }
 
     next();

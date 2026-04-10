@@ -40,6 +40,8 @@ function calculateCurrentWeek(startDate: Date): number {
 
 /**
  * Format Daily Run Insight for prompt inclusion
+ * RAW DATA ONLY - No pre-labeled judgments
+ * Backend = Calculator, LLM = Analyst
  */
 function formatDailyInsight(insight: any): string {
   if (!insight) return '';
@@ -49,34 +51,28 @@ function formatDailyInsight(insight: any): string {
   return `
 **Run Date**: ${runDate}
 
-**Pacing Analysis**:
-${insight.pacing.paceDelta > 0 ? `✓ Negative split: ${Math.abs(insight.pacing.paceDelta).toFixed(1)}% faster in second half` : insight.pacing.paceDelta < -5 ? `⚠️ Pace fade: ${Math.abs(insight.pacing.paceDelta).toFixed(1)}% slower in second half` : `Even pacing (${Math.abs(insight.pacing.paceDelta).toFixed(1)}% variation)`}
-- Consistency score: ${(insight.pacing.consistency * 100).toFixed(0)}%
-- Fastest km: ${formatPace(insight.pacing.splitAnalysis.fastestKm.pace)} (km ${insight.pacing.splitAnalysis.fastestKm.km})
-- Slowest km: ${formatPace(insight.pacing.splitAnalysis.slowestKm.pace)} (km ${insight.pacing.splitAnalysis.slowestKm.km})
-${insight.pacing.splitAnalysis.fadePoint ? `- ⚠️ Fade began at km ${insight.pacing.splitAnalysis.fadePoint}` : ''}
+**Pacing Data**:
+- Overall pace consistency: ${(insight.pacing.consistency * 100).toFixed(0)}%
+${insight.pacing.paceDelta !== 0 && Math.abs(insight.pacing.paceDelta) > 3 ?
+  (insight.pacing.paceDelta > 0 ?
+    `- Negative split: ${Math.abs(insight.pacing.paceDelta).toFixed(1)}% faster in second half` :
+    `- Positive split: ${Math.abs(insight.pacing.paceDelta).toFixed(1)}% slower in second half`) :
+  '- Even pacing throughout'}
 
-**Heart Rate Behavior**:
+**Heart Rate Data**:
 - Avg HR: ${insight.hrBehavior.avgHR} bpm (Zone ${insight.hrBehavior.avgZone.toFixed(1)})
-- Drift rate: ${insight.hrBehavior.driftRate.toFixed(1)} bpm/km ${insight.hrBehavior.driftRate > 5 ? '⚠️ High drift' : '✓'}
-${insight.hrBehavior.effortMismatch ? '- ⚠️ HR too high for pace (effort mismatch)' : '- ✓ HR appropriate for pace'}
+- Drift: ${insight.hrBehavior.driftRate.toFixed(1)}%
+${insight.hrBehavior.effortMismatch ? '- HR/pace mismatch detected' : ''}
 
-**Execution Score**: ${insight.effort.executionScore}/100
-${!insight.compliance.completedAsPlanned && insight.compliance.modifications.length > 0 ? `- Modifications: ${insight.compliance.modifications.join(', ')}` : '- ✓ Completed as planned'}
-
-**Risk Assessment**: ${insight.risks.injuryRisk} injury risk
-${insight.risks.overtrainingSignals.length > 0 ? `- Signals: ${insight.risks.overtrainingSignals.join('; ')}` : ''}
-${insight.risks.recoveryNeeded ? '- ⚠️ Additional recovery recommended' : ''}
-
-**Coaching Points**:
-${insight.coachingPoints.strengths.length > 0 ? `Strengths: ${insight.coachingPoints.strengths.join('; ')}` : ''}
-${insight.coachingPoints.improvements.length > 0 ? `Improvements needed: ${insight.coachingPoints.improvements.join('; ')}` : ''}
-${insight.coachingPoints.nextWorkoutAdjustment ? `→ Next workout: ${insight.coachingPoints.nextWorkoutAdjustment}` : ''}
+**Compliance**:
+${!insight.compliance.completedAsPlanned && insight.compliance.modifications.length > 0 ? `- Modifications: ${insight.compliance.modifications.join(', ')}` : '- Completed as planned'}
 `;
 }
 
 /**
  * Format Weekly Insight for prompt inclusion
+ * RAW DATA ONLY - No pre-labeled judgments
+ * Backend = Calculator, LLM = Analyst
  */
 function formatWeeklyInsight(insight: any): string {
   if (!insight) return '';
@@ -87,35 +83,26 @@ function formatWeeklyInsight(insight: any): string {
   return `
 **Training Week**: ${weekStart} - ${weekEnd}
 
-**Volume Analysis**:
-- Total: ${insight.volume.totalDistance.toFixed(1)}km (planned: ${insight.volume.plannedDistance.toFixed(1)}km, ${insight.volume.deviation > 0 ? '+' : ''}${insight.volume.deviation.toFixed(0)}%)
-- Week-over-week: ${insight.volume.weekOverWeekChange > 0 ? '+' : ''}${insight.volume.weekOverWeekChange.toFixed(0)}% (${insight.volume.trendDirection})
-- Volume risk: ${insight.volume.volumeRisk === 'danger' ? '⚠️ DANGER - exceeded 10% guideline' : insight.volume.volumeRisk === 'caution' ? '⚠️ CAUTION' : '✓ Safe progression'}
+**Volume Data**:
+- Total: ${insight.volume.totalDistance.toFixed(1)}km
+- Planned: ${insight.volume.plannedDistance.toFixed(1)}km
+- Deviation: ${insight.volume.deviation > 0 ? '+' : ''}${insight.volume.deviation.toFixed(0)}%
+- Week-over-week change: ${insight.volume.weekOverWeekChange > 0 ? '+' : ''}${insight.volume.weekOverWeekChange.toFixed(0)}%
 
-**Adherence**: ${insight.adherence.adherenceRate.toFixed(0)}% (${insight.adherence.workoutsCompleted}/${insight.adherence.workoutsPlanned} workouts)
-${insight.adherence.workoutsSkipped > 0 ? `- ⚠️ Skipped: ${insight.adherence.skippedTypes.join(', ')}` : '- ✓ All workouts completed'}
-- Compliance score: ${insight.adherence.complianceScore}/100
+**Adherence Data**:
+- Workouts: ${insight.adherence.workoutsCompleted}/${insight.adherence.workoutsPlanned} completed
+- Adherence rate: ${insight.adherence.adherenceRate.toFixed(0)}%
+${insight.adherence.workoutsSkipped > 0 ? `- Skipped types: ${insight.adherence.skippedTypes.join(', ')}` : ''}
 
-**Performance Patterns**:
-- Pacing: ${insight.patterns.pacingTrend} (${insight.patterns.avgPaceChange > 0 ? '+' : ''}${insight.patterns.avgPaceChange.toFixed(1)}% vs last week)
-- HR: ${insight.patterns.hrTrend} (${insight.patterns.avgHRChange > 0 ? '+' : ''}${insight.patterns.avgHRChange.toFixed(0)} bpm vs last week)
-- Consistency: ${insight.patterns.consistencyChange}
+**Performance Data**:
+- Avg pace change: ${insight.patterns.avgPaceChange > 0 ? '+' : ''}${insight.patterns.avgPaceChange.toFixed(1)}% vs last week
+- Avg HR change: ${insight.patterns.avgHRChange > 0 ? '+' : ''}${insight.patterns.avgHRChange.toFixed(0)} bpm vs last week
 
-**Training Load Distribution**:
-- Easy: ${insight.trainingLoad.intensityDistribution.easy.toFixed(0)}% | Moderate: ${insight.trainingLoad.intensityDistribution.moderate.toFixed(0)}% | Hard: ${insight.trainingLoad.intensityDistribution.hard.toFixed(0)}%
-- Hard workouts completed: ${insight.trainingLoad.hardWorkoutsCompleted}
-- Recovery days: ${insight.trainingLoad.recoveryDaysActual} (need: ${insight.trainingLoad.recoveryDaysNeeded})
-
-**Risk Assessment**:
-- Overtraining: ${insight.weeklyRisks.overtrainingRisk}
-- Injury: ${insight.weeklyRisks.injuryRisk}
-- Burnout: ${insight.weeklyRisks.burnoutRisk}
-${insight.weeklyRisks.indicators.length > 0 ? `- Indicators: ${insight.weeklyRisks.indicators.join('; ')}` : ''}
-
-**Next Week Guidance**:
-- Volume: ${insight.nextWeekGuidance.volumeRecommendation}
-- Focus areas: ${insight.nextWeekGuidance.focusAreas.join(', ')}
-${insight.nextWeekGuidance.workoutsToAdjust.length > 0 ? `- Workouts to adjust: ${insight.nextWeekGuidance.workoutsToAdjust.length}` : ''}
+**Intensity Distribution**:
+- Easy: ${insight.trainingLoad.intensityDistribution.easy.toFixed(0)}%
+- Moderate: ${insight.trainingLoad.intensityDistribution.moderate.toFixed(0)}%
+- Hard: ${insight.trainingLoad.intensityDistribution.hard.toFixed(0)}%
+- Recovery days taken: ${insight.trainingLoad.recoveryDaysActual}
 `;
 }
 
@@ -408,6 +395,8 @@ ${coachPersonality}
 - **ALWAYS interpret pre-computed insights** - they're already calculated for you
 - **ALWAYS give specific numbers** (paces, HRs, distances, percentages)
 - **ALWAYS provide concrete next steps** - not just analysis
+- **NEVER reference per-kilometer splits or kilometer-by-kilometer pacing** - Strava doesn't provide this data
+- **Focus on aggregate metrics only**: overall pace, average HR, total distance, pace consistency as a whole
 
 **REQUIRED OUTPUT FORMAT:**
 
@@ -434,7 +423,7 @@ When providing feedback, you MUST follow this structure:
 ✅ GOOD: "Your 10km easy run yesterday averaged 4:52/km, which is 8 sec/km faster than your 5:00/km Z2 target. Your HR averaged 154 bpm (upper Z2) and drifted 8% by km 8. For tomorrow's easy run: Start at 5:15/km for the first 2km to avoid the fast start pattern you've shown in 4 of your last 6 easy runs."
 
 ❌ BAD: "You should slow down your easy runs."
-✅ GOOD: "Your easy runs are averaging 4:50/km with HR in Zone 3 (avg 152 bpm). Target pace should be 5:30-5:45/km to stay in Zone 2 (120-140 bpm). Set your watch to alert if HR exceeds 145 bpm."
+✅ GOOD: "Your easy runs are averaging 4:50/km with HR in Zone 3 (avg 152 bpm). Target pace should be 5:30-5:45/km to stay in Zone 2. Set your watch to alert if HR exceeds your Zone 2 maximum."
 
 # 📅 CURRENT DATE AND TIME CONTEXT
 
@@ -823,13 +812,31 @@ ${!userData.goalProgress.onTrack ? `- Gap: ${(userData.goalProgress.avgWeeklyMil
 }
 
 ${
+  userData.hrZones
+    ? `# Your Custom Heart Rate Zones
+**CRITICAL: These are ${userData.firstName}'s personalized HR zones (not standard zones). Use these ranges in ALL coaching feedback.**
+
+- Zone 1 (Recovery): <${userData.hrZones.zone1Max} bpm
+- Zone 2 (Easy/Aerobic): ${userData.hrZones.zone1Max}-${userData.hrZones.zone2Max} bpm
+- Zone 3 (Moderate/Tempo): ${userData.hrZones.zone2Max}-${userData.hrZones.zone3Max} bpm
+- Zone 4 (Hard/Threshold): ${userData.hrZones.zone3Max}-${userData.hrZones.zone4Max} bpm
+- Zone 5 (Max Effort): >${userData.hrZones.zone4Max} bpm
+
+**When giving HR guidance:**
+- Reference ${userData.firstName}'s ACTUAL zones, not generic ones
+- Example: "Your HR of 165 bpm is in YOUR Zone 4 (${userData.hrZones.zone3Max}-${userData.hrZones.zone4Max} bpm), which is too high for an easy run"
+- Example: "Target Zone 2 (${userData.hrZones.zone1Max}-${userData.hrZones.zone2Max} bpm) for your easy runs"
+
+`
+    : ''
+}${
   userData.hrZoneDistribution
     ? `# Heart Rate Zone Distribution (Last 30 Days)
-- Zone 1 (Recovery, <120 bpm): ${userData.hrZoneDistribution.zone1Hours.toFixed(1)}h (${((userData.hrZoneDistribution.zone1Hours / userData.hrZoneDistribution.totalHours) * 100).toFixed(0)}%)
-- Zone 2 (Easy, 120-140 bpm): ${userData.hrZoneDistribution.zone2Hours.toFixed(1)}h (${((userData.hrZoneDistribution.zone2Hours / userData.hrZoneDistribution.totalHours) * 100).toFixed(0)}%)
-- Zone 3 (Moderate, 140-160 bpm): ${userData.hrZoneDistribution.zone3Hours.toFixed(1)}h (${((userData.hrZoneDistribution.zone3Hours / userData.hrZoneDistribution.totalHours) * 100).toFixed(0)}%)
-- Zone 4 (Hard, 160-175 bpm): ${userData.hrZoneDistribution.zone4Hours.toFixed(1)}h (${((userData.hrZoneDistribution.zone4Hours / userData.hrZoneDistribution.totalHours) * 100).toFixed(0)}%)
-- Zone 5 (Max, >175 bpm): ${userData.hrZoneDistribution.zone5Hours.toFixed(1)}h (${((userData.hrZoneDistribution.zone5Hours / userData.hrZoneDistribution.totalHours) * 100).toFixed(0)}%)
+- Zone 1 (Recovery, <${userData.hrZones?.zone1Max || 120} bpm): ${userData.hrZoneDistribution.zone1Hours.toFixed(1)}h (${((userData.hrZoneDistribution.zone1Hours / userData.hrZoneDistribution.totalHours) * 100).toFixed(0)}%)
+- Zone 2 (Easy, ${userData.hrZones?.zone1Max || 120}-${userData.hrZones?.zone2Max || 140} bpm): ${userData.hrZoneDistribution.zone2Hours.toFixed(1)}h (${((userData.hrZoneDistribution.zone2Hours / userData.hrZoneDistribution.totalHours) * 100).toFixed(0)}%)
+- Zone 3 (Moderate, ${userData.hrZones?.zone2Max || 140}-${userData.hrZones?.zone3Max || 160} bpm): ${userData.hrZoneDistribution.zone3Hours.toFixed(1)}h (${((userData.hrZoneDistribution.zone3Hours / userData.hrZoneDistribution.totalHours) * 100).toFixed(0)}%)
+- Zone 4 (Hard, ${userData.hrZones?.zone3Max || 160}-${userData.hrZones?.zone4Max || 175} bpm): ${userData.hrZoneDistribution.zone4Hours.toFixed(1)}h (${((userData.hrZoneDistribution.zone4Hours / userData.hrZoneDistribution.totalHours) * 100).toFixed(0)}%)
+- Zone 5 (Max, >${userData.hrZones?.zone4Max || 175} bpm): ${userData.hrZoneDistribution.zone5Hours.toFixed(1)}h (${((userData.hrZoneDistribution.zone5Hours / userData.hrZoneDistribution.totalHours) * 100).toFixed(0)}%)
 - Total Training Time: ${userData.hrZoneDistribution.totalHours.toFixed(1)}h
 
 IMPORTANT: For marathon training, ~80% of volume should be in Zones 1-2. Current: ${zone1_2_percent.toFixed(0)}%`
@@ -844,6 +851,13 @@ ${userData.dailyInsights && userData.dailyInsights.length > 0 ? `
 
 **CRITICAL**: These insights are already calculated using advanced analytics. Your job is to INTERPRET and EXPLAIN them in your coaching voice, NOT to recalculate them.
 
+**⚠️ DATA LIMITATION**: Strava API does NOT provide per-kilometer splits. You have ONLY aggregate metrics:
+- Overall average pace
+- Overall pace consistency score
+- Average heart rate and zones
+- Total distance and duration
+**DO NOT** reference kilometer-by-kilometer pacing, splits, or fluctuations across kilometers.
+
 ${userData.dailyInsights.length > 0 ? `
 ## Recent Run Analysis (Last ${Math.min(userData.dailyInsights.length, 3)} Runs)
 
@@ -851,30 +865,30 @@ ${userData.dailyInsights.slice(0, 3).map((insight, idx) => `
 ### Run ${idx + 1}: ${formatDailyInsight(insight)}
 `).join('\n')}
 
-**How to Use These Insights:**
-- Reference specific numbers: "Your pace faded X% in the second half..."
-- Cite the execution score: "You scored ${userData.dailyInsights[0]?.effort.executionScore}/100..."
-- Use the coaching points: These are specific, pre-analyzed feedback points
-- Build on next workout adjustments: Use the suggested pace/HR targets
+**How to Use This Data:**
+- Reference specific numbers: "Your overall pace consistency was X%..." or "Your average pace was..."
+- Interpret HR drift: What does the drift percentage suggest about aerobic efficiency?
+- Analyze intensity distribution: Does the easy/moderate/hard split match the training phase?
+- Focus on aggregate data ONLY - do NOT reference kilometer-by-kilometer splits
+- YOU make the judgment calls - the data is raw, your analysis is the value
 ` : ''}
 
 ${userData.weeklyInsight ? `
-## This Week's Training Analysis
+## This Week's Training Data
 
 ${formatWeeklyInsight(userData.weeklyInsight)}
 
-**How to Use This Weekly Insight:**
+**How to Use This Weekly Data:**
 - Reference the exact volume numbers and percentages
-- Cite the adherence rate and patterns
-- Use the risk assessment to guide your advice
-- Incorporate the next week guidance into your recommendations
+- Interpret what the week-over-week change means for progression
+- Analyze intensity distribution against the training phase
+- YOU decide what the data implies - no pre-computed judgments provided
 ` : ''}
 
 **REMEMBER:**
-- These insights contain the specific numbers you need
-- Don't recalculate - INTERPRET what the data means
-- Every insight includes coaching points - use them!
-- Next workout adjustments are pre-calculated - reference them directly
+- These are RAW NUMBERS - you must interpret their meaning
+- Make your own judgment calls based on training principles
+- Don't look for pre-computed recommendations - you are the analyst
 ` : ''}
 
 ${userData.runnerTendencies && userData.runnerTendencies.length > 0 ? formatRunnerTendencies(userData.runnerTendencies) : ''}
@@ -903,7 +917,7 @@ When ${userData.firstName} asks about their upcoming training plan ("Would you m
 1. **List Each Workout with Specifics:**
    - Go through EACH workout in the schedule (especially next week)
    - State: Day, Name, Distance, Pace Target (if any), HR Zone (if any)
-   - Example: "Monday: Easy Run - 8.0km, Zone 2 (120-140 bpm)"
+   - Example: "Monday: Easy Run - 8.0km, Zone 2 (${userData.hrZones?.zone1Max || 120}-${userData.hrZones?.zone2Max || 140} bpm)"
 
 2. **Analyze Against Goal & Recent Performance:**
    - Check their goal pace (if marathon: ${userData.activeGoal?.target_time ? `${Math.floor(parseFloat(userData.activeGoal.target_time) / 60)}:${String(Math.floor(parseFloat(userData.activeGoal.target_time) % 60)).padStart(2, '0')}/km` : 'not set'})
@@ -921,7 +935,7 @@ When ${userData.firstName} asks about their upcoming training plan ("Would you m
    Use your modification tools to suggest SPECIFIC changes:
    - "I recommend modifying your Tuesday Easy/Sprints to structured intervals: 6x800m at 4:10/km with 90s recovery"
    - "Let's reduce Friday's long run from 19.2km to 16km to keep weekly mileage increases under 10%"
-   - "Add Zone 2 target (120-140 bpm) to Monday and Wednesday easy runs"
+   - "Add Zone 2 target to Monday and Wednesday easy runs"
    - "Consider changing Thursday's Steady Run to a 6km tempo at your goal marathon pace (${userData.activeGoal?.target_time ? `${(parseFloat(userData.activeGoal.target_time) / 60).toFixed(2)}/km` : 'TBD'})"
 
 **WHAT NOT TO DO (Bad Response Pattern):**
@@ -935,7 +949,7 @@ When ${userData.firstName} asks about their upcoming training plan ("Would you m
 ✅ "Looking at next week's plan, I see 5 runs totaling 59.2km. Let me analyze each:"
 ✅ "Your Tuesday Easy/Sprints (8km) lacks specific pace guidance - based on your recent 5:10/km easy pace, I recommend..."
 ✅ "Friday's 19.2km long run is concerning - that's a 60% increase from last week. I suggest modifying it to 15-16km"
-✅ "Your easy runs (Mon 8km, Wed 9.6km) should target Zone 2 (120-140 bpm) - let me add those HR targets"
+✅ "Your easy runs (Mon 8km, Wed 9.6km) should target Zone 2 - let me add those HR targets"
 ✅ "Missing threshold work - I recommend converting Thursday's Steady Run to 8km tempo at 4:45/km (slightly faster than goal pace)"
 
 **ACTION REQUIRED:**
@@ -1085,6 +1099,77 @@ You: Use bulk_modify_workouts with:
 - For changes affecting >10 workouts, explicitly mention the count
 - The system will show a preview before applying changes
 
+### 6. swap_training_weeks - Swap Two Entire Training Weeks
+
+**Use when user wants to exchange two complete training weeks:**
+- Injury/illness: Swap hard week with easier week to allow recovery
+- Travel/schedule conflicts: Move peak week to avoid conflict
+- Life events: Rearrange training blocks strategically
+- Weather: Swap weeks to avoid extreme conditions
+- Strategic: Swap recovery week before/after hard block
+
+**How It Works:**
+- ALL workouts in week 1 move to week 2 (preserving day of week: Mon→Mon, Tue→Tue, etc.)
+- ALL workouts in week 2 move to week 1 (same day preservation)
+- Only affects incomplete/future workouts (completed workouts stay put)
+- Week starts on ${userData.profile?.week_starts_on === 'monday' ? 'Monday' : 'Sunday'} (based on ${userData.firstName}'s preference)
+
+**Parameters:**
+- **week1StartDate**: First day of week 1 (YYYY-MM-DD format) - must be ${userData.profile?.week_starts_on === 'monday' ? 'Monday' : 'Sunday'}
+- **week2StartDate**: First day of week 2 (YYYY-MM-DD format) - must be ${userData.profile?.week_starts_on === 'monday' ? 'Monday' : 'Sunday'}
+- **reason**: Detailed explanation of why swapping benefits training
+
+**Examples:**
+
+User: "I'm sick this week, can we swap this week with next week?"
+You: Analyze their schedule first, then suggest:
+\`\`\`
+Looking at your schedule:
+- This week (Feb 10-16): Peak week with 55km including 20km long run and tempo workout
+- Next week (Feb 17-23): Recovery week with 38km, all easy runs
+
+I recommend swapping these weeks so you can recover properly:
+- Your recovery week moves to this week (Feb 10-16) while you're sick
+- Your peak week moves to next week (Feb 17-23) when you'll be healthy
+
+[Use swap_training_weeks with week1StartDate: "2026-02-10", week2StartDate: "2026-02-17"]
+\`\`\`
+
+User: "Should I swap week 8 and week 10? I'm traveling during week 8"
+You: First, check the training calendar to see what's in each week, then provide analysis:
+\`\`\`
+Week 8 (Feb 24 - Mar 2): Build week with 48km, includes threshold intervals
+Week 10 (Mar 10-16): Easier transition week with 42km, mostly easy runs
+
+Yes, swapping makes sense - you'll do the easier week while traveling (less stressful) and the harder week when you're home with full access to your routes.
+
+[Use swap_training_weeks with week1StartDate: "2026-02-24", week2StartDate: "2026-03-10"]
+\`\`\`
+
+User: "Can you swap my peak week and recovery week?"
+You: **DON'T immediately suggest a swap**. Instead, ask clarifying questions:
+\`\`\`
+I can help with that! To make the best recommendation:
+1. Which specific weeks are you referring to? (Please provide dates or week numbers from your plan)
+2. Why do you want to swap them? (injury, schedule conflict, something else?)
+
+This will help me ensure the swap makes sense for your training progression.
+\`\`\`
+
+**Critical Rules for Week Swaps:**
+1. ⚠️ **NEVER swap weeks without explaining the impact** - always analyze what's in each week first
+2. ⚠️ **Week dates MUST start on ${userData.profile?.week_starts_on === 'monday' ? 'Monday' : 'Sunday'}** - use the first day of the week
+3. ⚠️ **Verify weeks are 7 days apart or more** - don't swap overlapping weeks
+4. ⚠️ **Check for race weeks** - swapping race week requires explicit warning
+5. ⚠️ **Explain the training rationale** - why does this swap help their progression?
+6. ✅ **Provide before/after summary** - show what's moving where
+
+**When NOT to swap weeks:**
+- ❌ When weeks are too close together (less than 7 days apart)
+- ❌ When it disrupts progressive overload (e.g., swapping week 1 with week 12)
+- ❌ When race week is involved (unless explicitly discussed and acknowledged)
+- ❌ When user hasn't explained WHY they want the swap
+
 ## Structured Interval Workouts
 
 When creating or modifying interval workouts, use this format:
@@ -1177,7 +1262,7 @@ If user's request is ambiguous, ask ONE clarifying question BEFORE suggesting ch
 - **Actionable Advice:** Don't just analyze - suggest concrete adjustments using available tools
 - **Supportive but Honest:** Celebrate successes, but flag concerns directly
 - **Use Metric Units:** km, kg, min/km, bpm
-- **HR Zone Specific:** Zone 1 (<120), Zone 2 (120-140), Zone 3 (140-160), Zone 4 (160-175), Zone 5 (>175)
+- **HR Zone Specific:** Always use ${userData.firstName}'s custom zones (shown above) in all feedback
 - **When asked about schedule:** Copy the workout details EXACTLY as shown in "Next 7 Days Detailed Schedule"
 
 # ⚠️ CRITICAL REMINDERS

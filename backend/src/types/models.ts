@@ -12,6 +12,7 @@ export interface User {
   created_at: Date;
   updated_at: Date;
   last_login_at?: Date;
+  last_activity_sync_at?: Date;
 }
 
 export interface ChartPreferences {
@@ -51,6 +52,11 @@ export interface UserProfile {
   coach_communication_style?: 'casual' | 'balanced' | 'professional';
   chart_preferences?: ChartPreferences;
   personal_bests?: PersonalBests;
+  hr_zone_1_max?: number; // Zone 1 upper bound (bpm)
+  hr_zone_2_max?: number; // Zone 2 upper bound (bpm)
+  hr_zone_3_max?: number; // Zone 3 upper bound (bpm)
+  hr_zone_4_max?: number; // Zone 4 upper bound (bpm)
+  hr_zone_5_max?: number; // Zone 5 upper bound (bpm)
   created_at: Date;
   updated_at: Date;
 }
@@ -103,6 +109,7 @@ export interface Activity {
   splits_metric?: any;
   splits_standard?: any;
   laps?: any;
+  execution_score?: number;
   created_at: Date;
   updated_at: Date;
   synced_at: Date;
@@ -150,7 +157,7 @@ export interface PlannedWorkout {
   id: number;
   training_plan_id: number;
   user_id: number;
-  scheduled_date: Date;
+  scheduled_date: Date | string;
   workout_type: string;
   name?: string;
   description?: string;
@@ -255,4 +262,184 @@ export interface StravaActivity {
   };
   splits_metric?: any[];
   splits_standard?: any[];
+}
+
+/**
+ * Marathon Performance Metrics
+ * RAW DATA ONLY - No pre-labeled judgments.
+ * Let the LLM reason and make judgment calls.
+ * Backend = Calculator, LLM = Analyst
+ */
+export interface MarathonMetrics {
+  // Goal Information (factual)
+  goal: {
+    targetTimeSeconds: number;    // 10740 (raw seconds)
+    goalPaceMinKm: number;        // 4.26 (decimal min/km)
+    goalPaceFormatted: string;    // "4:15/km"
+    raceDate: string;             // "May 30, 2026"
+    daysUntilRace: number;        // 88
+    raceDistanceKm: number;       // 42.195
+  } | null;
+
+  // Derived Pace Targets (computed from goal pace - these are reference points, not judgments)
+  paceTargets: {
+    easy: { min: string; max: string };
+    tempo: { min: string; max: string };
+    interval: { min: string; max: string };
+    longRun: { min: string; max: string };
+  } | null;
+
+  // Weekly Load - RAW NUMBERS ONLY
+  weeklyLoad: {
+    plannedDistanceKm: number;
+    typicalWeeklyKm: number;
+    volumeChangePercent: number;  // Raw % - LLM decides if acceptable
+    completedDistanceKm: number;
+    remainingDistanceKm: number;
+  };
+
+  // Stress Distribution - QUALITY KM BREAKDOWN (let LLM infer density)
+  stressDistribution: {
+    tempoKm: number;              // km at tempo/threshold pace
+    intervalKm: number;           // km at interval pace (faster than tempo)
+    longRunKm: number;            // km in long run
+    easyKm: number;               // km at easy/recovery pace
+    qualityKmPercent: number;     // % of weekly volume at moderate/high intensity
+    workoutBreakdown: Array<{     // Per-workout stress detail
+      workoutId: number | null;   // ID for tool calls (null if completed)
+      day: string;                // "Mon", "Tue", etc.
+      type: string;               // workout type
+      distanceKm: number;
+      isQuality: boolean;         // tempo, intervals, or long run
+    }>;
+  };
+
+  // Long Run Data - RAW NUMBERS, NO PROGRESSION LABELS
+  longRunData: {
+    thisWeekLongRunKm: number | null;
+    longRunAsPercentOfRace: number | null;
+    longestRunLast4Weeks: number;
+    weeklyLongRuns4Weeks: number[];   // [18, 20, 22, 25.6] - LLM sees pattern
+  };
+
+  // Training Context - FACTUAL ONLY
+  trainingContext: {
+    weeksUntilRace: number;
+    trainingPhase: 'base' | 'build' | 'peak' | 'taper';  // Factual based on time
+  };
+
+  // Aerobic Data - RAW PERCENTAGES, NO JUDGMENT
+  aerobicData: {
+    zone1_2Percent: number;       // 50 - LLM decides if appropriate
+    zone4_5Percent: number;       // 25
+    totalTrainingHours: number;
+  };
+
+  // Recent Performance - RAW INDICATORS
+  recentPerformance: {
+    avgEasyPaceMinKm: number | null;    // 5.27 (decimal)
+    avgEasyPaceFormatted: string | null; // "5:16/km"
+    avgEasyHR: number | null;
+    avgWeeklyVolume4Weeks: number;
+  };
+}
+
+/**
+ * Training Context - Temporal context about training blocks
+ * Helps LLM distinguish between pre-plan history and structured training
+ */
+export interface TrainingContext {
+  // Race Goal Info
+  raceGoal: string;              // "Stockholm Marathon"
+  goalTime: string;              // "2:59"
+  goalPace: string;              // "4:15/km"
+  raceDate: string;              // "2026-05-30"
+
+  // Training Block Boundaries
+  trainingBlockStart: string;    // "2026-02-09" (plan start_date)
+  trainingBlockEnd: string;      // "2026-05-30" (race date)
+  trainingBlockLengthWeeks: number; // 16
+
+  // Current Position in Block
+  weeksIntoBlock: number;        // 5
+  weeksRemaining: number;        // 11
+  blockProgressPercent: number;  // 31
+
+  // Training Phase
+  currentPhase: 'pre_plan' | 'base' | 'build' | 'peak' | 'taper';
+  phaseWeeksRemaining: number;   // Weeks until next phase
+
+  // Phase Focus (what matters now)
+  keyFocus: string;              // "Increase weekly mileage gradually and extend long run distance"
+}
+
+/**
+ * Long Run Progression - Explicit tracking of long run development
+ */
+export interface LongRunProgression {
+  sincePlanStart: number[];      // [12, 16, 18, 20] km
+  prePlanLongest: number | null; // Baseline longest run before plan
+  currentLongest: number;        // Longest run so far in plan
+  upcomingTarget: number | null; // Next long run target from plan
+  goalPeak: number;              // Target peak long run (e.g., 32km for marathon)
+  progressionRate: 'appropriate' | 'slow' | 'aggressive' | 'insufficient_data';
+}
+
+/**
+ * Weekly Stats for training history breakdown
+ */
+export interface WeeklyStats {
+  weekNumber: number;
+  weekStart: string;
+  distance: number;
+  duration: number;
+  runCount: number;
+  averagePace?: number;
+  averageHR?: number;
+  longestRun: number;
+}
+
+/**
+ * Weekly Summary for aggregated stats
+ */
+export interface WeeklySummary {
+  avgWeeklyDistance: number;
+  avgRunsPerWeek: number;
+  longestRun: number;
+  volumeTrend?: number;
+}
+
+/**
+ * Segmented Training History
+ * Separates pre-plan baseline from structured training
+ */
+export interface SegmentedTrainingHistory {
+  prePlanHistory: {
+    weeks: number;
+    purpose: string;
+    weeklyBreakdown: WeeklyStats[];
+    summary: WeeklySummary;
+  } | null;
+
+  planHistory: {
+    weeks: number;
+    purpose: string;
+    weeklyBreakdown: WeeklyStats[];
+    summary: WeeklySummary;
+  };
+}
+
+/**
+ * Plan Adherence - Scoped to plan period only
+ */
+export interface PlanAdherence {
+  sincePlanStart: {
+    totalPlanned: number;
+    completed: number;
+    skipped: number;
+    adherenceRate: number;
+  };
+  periodStart: string;
+  periodEnd: string;
+  weeksInPlan: number;
 }

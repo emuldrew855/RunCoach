@@ -64,6 +64,21 @@ export async function sendMessage(
 
     console.log(`📨 Proxying chat request to agent service (user ${userId})`);
 
+    // Validate conversation exists and belongs to user
+    const { query } = await import('../config/database');
+    const convCheck = await query(
+      'SELECT id FROM conversations WHERE id = $1 AND user_id = $2',
+      [conversationId, userId]
+    );
+
+    if (convCheck.rows.length === 0) {
+      res.status(404).json({
+        success: false,
+        error: 'Conversation not found or does not belong to user',
+      });
+      return;
+    }
+
     // Save user message to database BEFORE proxying to agent
     await createMessage({
       user_id: userId,
@@ -71,7 +86,7 @@ export async function sendMessage(
       role: 'user',
       content: message,
       context_snapshot: null,
-      model_used: null,
+      model_used: undefined,
       tool_calls: null,
       pending_actions: [],
       is_agent_initiated: false,

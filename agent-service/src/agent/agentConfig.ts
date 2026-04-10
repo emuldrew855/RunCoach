@@ -60,8 +60,8 @@ export const AGENT_CONFIGS: Record<Intent, Omit<AgentConfig, 'tools'>> = {
    *
    * Role: Performance analysis expert focused on individual completed activities
    * Personality: Analytical, detail-oriented, data-driven
-   * Tools: NONE (read-only)
-   * Prompt: ~5k tokens (vs 15k generic) - 67% reduction
+   * Tools: ALL (can suggest plan modifications based on run analysis)
+   * Architecture: Two-pass (Analysis → Execution)
    */
   run_analysis: {
     name: 'RunAnalysisAgent',
@@ -69,7 +69,7 @@ export const AGENT_CONFIGS: Record<Intent, Omit<AgentConfig, 'tools'>> = {
     promptBuilder: buildRunAnalysisPrompt,
     maxTokens: 2000,
     temperature: 0.7,
-    description: 'Performance analysis expert - analyzes individual completed runs with split-by-split detail',
+    description: 'Performance analysis expert - analyzes completed runs and suggests plan adjustments',
   },
 
   /**
@@ -142,6 +142,8 @@ export function getAgentConfig(
     createWorkoutTool: DynamicStructuredTool<any>;
     deleteWorkoutTool: DynamicStructuredTool<any>;
     bulkModifyWorkoutsTool: DynamicStructuredTool<any>;
+    swapTrainingWeeksTool: DynamicStructuredTool<any>;
+    approvePlanTool?: DynamicStructuredTool<any>;
   }
 ): AgentConfig {
   const baseConfig = AGENT_CONFIGS[intent] || AGENT_CONFIGS.general_chat;
@@ -149,17 +151,25 @@ export function getAgentConfig(
   // Determine which tools this agent should have access to
   let tools: DynamicStructuredTool<any>[] = [];
 
-  if (intent === 'plan_review') {
-    // Plan review agent gets ALL tools
+  if (intent === 'plan_review' || intent === 'progress_tracking' || intent === 'run_analysis') {
+    // All coaching agents get tools for the two-pass architecture:
+    // - plan_review: Review and modify upcoming workouts
+    // - progress_tracking: Analyze weekly progress and suggest adjustments
+    // - run_analysis: Analyze completed runs and suggest plan adjustments
     tools = [
       allTools.shiftWorkoutTool,
       allTools.modifyWorkoutTool,
       allTools.createWorkoutTool,
       allTools.deleteWorkoutTool,
       allTools.bulkModifyWorkoutsTool,
+      allTools.swapTrainingWeeksTool,
     ];
+    // Add approve_plan tool if available
+    if (allTools.approvePlanTool) {
+      tools.push(allTools.approvePlanTool);
+    }
   }
-  // All other agents are read-only (no tools)
+  // general_chat agent is read-only (no tools)
 
   return {
     ...baseConfig,
@@ -179,7 +189,7 @@ export function logAgentSelection(intent: Intent, confidence: number): void {
   console.log(`🤖 Selected agent: ${config.name}`);
   console.log(`   Intent: ${intent} (${confidencePercent}% confidence)`);
   console.log(`   Role: ${config.description}`);
-  console.log(`   Tools: ${intent === 'plan_review' ? 'ALL (5 tools)' : 'NONE (read-only)'}`);
+  console.log(`   Tools: ${(intent === 'plan_review' || intent === 'progress_tracking' || intent === 'run_analysis') ? 'ALL (7 tools)' : 'NONE (read-only)'}`);
   console.log(`   Prompt size: ~${getPromptSizeEstimate(intent)} tokens`);
 }
 

@@ -326,7 +326,7 @@ export async function generatePatternEmbeddings(
       await pool.query(
         `INSERT INTO activity_patterns
          (user_id, pattern_text, pattern_category, occurrence_count, embedding, metadata, first_seen, last_seen)
-         VALUES ($1, $2, $3, 1, $4::vector, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         VALUES ($1, $2, $3, 1, $4::vector, $5::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          ON CONFLICT (user_id, pattern_text)
          DO UPDATE SET
            occurrence_count = activity_patterns.occurrence_count + 1,
@@ -334,9 +334,9 @@ export async function generatePatternEmbeddings(
            metadata = jsonb_set(
              activity_patterns.metadata,
              '{activity_ids}',
-             to_jsonb(COALESCE((activity_patterns.metadata->'activity_ids')::int[], ARRAY[]::int[]) || $6)
+             COALESCE(activity_patterns.metadata->'activity_ids', '[]'::jsonb) || $6::jsonb
            )`,
-        [userId, text, category, JSON.stringify(embedding), { activity_id: activityId }, activityId]
+        [userId, text, category, JSON.stringify(embedding), JSON.stringify({ activity_id: activityId }), JSON.stringify(activityId)]
       );
     } catch (error) {
       console.error(`Failed to store pattern embedding: ${text}`, error);

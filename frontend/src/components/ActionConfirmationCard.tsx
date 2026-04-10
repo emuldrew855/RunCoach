@@ -70,9 +70,10 @@ export default function ActionConfirmationCard({
     setIsProcessing(true);
     try {
       await onApprove(actionId);
-      toast.success('Action approved and executed');
+      // Parent handles success toast
     } catch (error) {
-      toast.error('Failed to execute action');
+      // Parent also handles error toast
+      console.error('Failed to execute action:', error);
     } finally {
       setIsProcessing(false);
     }
@@ -82,10 +83,11 @@ export default function ActionConfirmationCard({
     setIsProcessing(true);
     try {
       await onReject(actionId, rejectReason || undefined);
-      toast.success('Action rejected');
+      // Parent handles success toast
       setShowRejectReason(false);
     } catch (error) {
-      toast.error('Failed to reject action');
+      // Parent also handles error toast, so we can remove this
+      console.error('Failed to reject action:', error);
     } finally {
       setIsProcessing(false);
     }

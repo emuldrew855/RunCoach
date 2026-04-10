@@ -37,16 +37,18 @@ export const CollapsibleCard: React.FC<CollapsibleCardProps> = ({
     <div className={`card ${className}`}>
       <button
         onClick={toggleCollapsed}
-        className={`w-full flex items-center justify-between p-4 -m-4 mb-0 rounded-t-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${headerClassName}`}
+        className={`group w-full flex items-center justify-between p-4 -m-4 mb-0 rounded-t-lg hover:bg-gradient-to-r hover:from-gray-50 hover:to-transparent dark:hover:from-gray-700/50 dark:hover:to-transparent transition-all duration-300 ${headerClassName}`}
       >
-        <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+        <h2 className="text-xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 dark:from-gray-100 dark:to-gray-300 bg-clip-text text-transparent group-hover:from-strava group-hover:to-orange-600 transition-all duration-300">
           {title}
         </h2>
-        {isCollapsed ? (
-          <ChevronDown className="text-gray-500 dark:text-gray-400" size={20} />
-        ) : (
-          <ChevronUp className="text-gray-500 dark:text-gray-400" size={20} />
-        )}
+        <div className="w-8 h-8 rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center group-hover:bg-gradient-to-br group-hover:from-strava group-hover:to-orange-600 transition-all duration-300 group-hover:scale-110">
+          {isCollapsed ? (
+            <ChevronDown className="text-gray-500 dark:text-gray-400 group-hover:text-white transition-colors" size={18} />
+          ) : (
+            <ChevronUp className="text-gray-500 dark:text-gray-400 group-hover:text-white transition-colors" size={18} />
+          )}
+        </div>
       </button>
 
       <div

@@ -47,6 +47,9 @@ export const authAPI = {
 export const activitiesAPI = {
   getActivities: (params?: { limit?: number; offset?: number }) =>
     api.get('/activities', { params }),
+  getActivity: (id: number, refresh?: boolean) =>
+    api.get(`/activities/${id}`, { params: refresh ? { refresh: 'true' } : undefined }),
+  recomputeInsights: (id: number) => api.post(`/activities/${id}/recompute-insights`),
   syncActivities: () => api.post('/activities/sync'),
   getStats: (days?: number) => api.get('/activities/stats', { params: { days } }),
   getHRZones: (days?: number) => api.get('/activities/hr-zones', { params: { days } }),
@@ -151,4 +154,28 @@ export const memoryAPI = {
   getSummaries: () => api.get('/memories/summaries'),
   getStats: () => api.get('/memories/stats'),
   consolidate: () => api.post('/memories/consolidate'),
+};
+
+// Coaching API (AI-powered coaching features)
+export const coachingAPI = {
+  getDailyInsight: () => api.get('/coaching/daily-insight'),
+  dismissInsight: () => api.post('/coaching/daily-insight/dismiss'),
+  getTrainingStatus: () => api.get('/coaching/training-status'),
+  getWeeklyExecution: () => api.get('/coaching/weekly-execution'),
+};
+
+// Chart Data API (Dynamic performance visualizations)
+export const chartDataAPI = {
+  getPaceComparison: (params: { activityId: number; distanceMin?: number; distanceMax?: number; limit?: number }) =>
+    api.get('/chart-data/pace-comparison', { params }),
+  getSplitComparison: (params: { activityId: number; distanceMin?: number; distanceMax?: number; limit?: number }) =>
+    api.get('/chart-data/split-comparison', { params }),
+  getHRZoneDistribution: (params: { activityId: number }) =>
+    api.get('/chart-data/hr-zone-distribution', { params }),
+  getExecutionScoreTrend: (params: { workoutType?: string; limit?: number; days?: number }) =>
+    api.get('/chart-data/execution-score-trend', { params }),
+  getSimilarWorkouts: (params: { activityId: number; distanceMin?: number; distanceMax?: number; workoutType?: string; limit?: number }) =>
+    api.get('/chart-data/similar-workouts', { params }),
+  getPBProgression: (params: { distance: number; days?: number }) =>
+    api.get('/chart-data/pb-progression', { params }),
 };

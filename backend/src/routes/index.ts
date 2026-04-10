@@ -12,6 +12,8 @@ import adminRoutes from './admin.routes';
 import agentContextRoutes from './agentContext.routes';
 import raceHistoryRoutes from './raceHistory';
 import memoriesRoutes from './memories';
+import coachingRoutes from './coaching';
+import chartDataRoutes from './chartData.routes';
 
 const router = Router();
 
@@ -28,5 +30,7 @@ router.use('/notifications', notificationRoutes);
 router.use('/analysis', analysisRoutes);
 router.use('/admin', adminRoutes);
 router.use('/memories', memoriesRoutes);
+router.use('/coaching', coachingRoutes);
+router.use('/chart-data', chartDataRoutes);
 
 export default router;

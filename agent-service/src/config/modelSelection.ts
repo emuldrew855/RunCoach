@@ -16,12 +16,12 @@ export const MODELS: Record<ModelTier, ModelConfig> = {
   mini: {
     model: 'gpt-4o-mini',
     tier: 'mini',
-    costPerToken: 0.15,
+    costPerToken: 0.15, // $0.15 per 1M tokens
   },
   standard: {
-    model: 'gpt-4o-mini', // Changed from gpt-4o due to TPM limits (40k+ token context)
+    model: 'gpt-4o', // Upgraded to gpt-4o for better quality on complex analysis
     tier: 'standard',
-    costPerToken: 0.15,
+    costPerToken: 2.50, // $2.50 per 1M tokens
   },
 };
 

@@ -48,7 +48,22 @@
       "Bash(npm run backfill:all:*)",
       "Bash(timeout 240 npm run backfill:all)",
       "Bash(docker-compose exec:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(set NODE_OPTIONS=--max-old-space-size=4096)",
+      "Bash(timeout:*)",
+      "Bash(node --check:*)",
+      "Bash(node test-refactor.js:*)",
+      "Bash(tree:*)",
+      "Bash(wc:*)",
+      "WebFetch(domain:www.strava.com)",
+      "Bash(node check-data.js:*)",
+      "Bash(node test-context.js:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(az account show:*)",
+      "Bash(az webapp deployment:*)",
+      "Bash(az webapp restart:*)",
+      "Bash(az webapp up:*)"
     ]
   }
 }

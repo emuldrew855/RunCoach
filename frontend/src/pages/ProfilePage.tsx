@@ -9,11 +9,14 @@ import CoachStyleSelector, { CoachStyle, CommunicationStyle } from '../component
 import RaceHistoryManager from '../components/RaceHistoryManager';
 import { MemoryViewer } from '../components/MemoryViewer';
 import { PersonalBestsEditor } from '../components/PersonalBestsEditor';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 export default function ProfilePage() {
+  const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { preferences, updatePreferences, distanceUnit } = usePreferences();
   const [editingProfile, setEditingProfile] = useState(false);
+  const [editingHRZones, setEditingHRZones] = useState(false);
   const [editingGoal, setEditingGoal] = useState(false);
 
   const { data: profileData } = useQuery({
@@ -46,6 +49,7 @@ export default function ProfilePage() {
       toast.success('Profile updated successfully');
       queryClient.invalidateQueries({ queryKey: ['profile'] });
       setEditingProfile(false);
+      setEditingHRZones(false);
     },
     onError: () => {
       toast.error('Failed to update profile');
@@ -119,8 +123,8 @@ export default function ProfilePage() {
   const activeGoal = goalsData?.find((g) => g.is_active);
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Profile & Goals</h1>
+    <div className="max-w-4xl mx-auto space-y-4 md:space-y-6 pb-20 md:pb-0">
+      <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-gray-100">Profile & Goals</h1>
 
       {/* Profile Section */}
       <div className="card">
@@ -139,7 +143,7 @@ export default function ProfilePage() {
 
         {editingProfile ? (
           <form onSubmit={handleProfileSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Age</label>
                 <input
@@ -217,7 +221,7 @@ export default function ProfilePage() {
             </button>
           </form>
         ) : profileData ? (
-          <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
             <div>
               <p className="text-gray-600 dark:text-gray-400">Age</p>
               <p className="font-semibold text-gray-900 dark:text-gray-100">{profileData.age || 'Not set'}</p>
@@ -247,6 +251,272 @@ export default function ProfilePage() {
           </div>
         ) : (
           <p className="text-gray-600 dark:text-gray-400">No profile data yet. Click "Edit" to add your information.</p>
+        )}
+      </div>
+
+      {/* Heart Rate Zones Section */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">Heart Rate Zones</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              Customize your HR zones to match your physiology (from Strava or lab testing)
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              const isEditing = editingHRZones;
+              setEditingHRZones(!isEditing);
+              if (!isEditing) {
+                setProfileForm({
+                  hr_zone_1_max: profileData?.hr_zone_1_max || 120,
+                  hr_zone_2_max: profileData?.hr_zone_2_max || 140,
+                  hr_zone_3_max: profileData?.hr_zone_3_max || 160,
+                  hr_zone_4_max: profileData?.hr_zone_4_max || 175,
+                  hr_zone_5_max: profileData?.hr_zone_5_max || 220,
+                });
+              }
+            }}
+            className="btn btn-secondary flex items-center gap-2"
+          >
+            <EditIcon size={16} />
+            {editingHRZones ? 'Cancel' : 'Edit Zones'}
+          </button>
+        </div>
+
+        {editingHRZones ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              // Validation: each zone max must be greater than previous
+              const z1 = profileForm.hr_zone_1_max || 0;
+              const z2 = profileForm.hr_zone_2_max || 0;
+              const z3 = profileForm.hr_zone_3_max || 0;
+              const z4 = profileForm.hr_zone_4_max || 0;
+              const z5 = profileForm.hr_zone_5_max || 0;
+
+              if (z2 <= z1 || z3 <= z2 || z4 <= z3 || z5 <= z4) {
+                toast.error('Each zone maximum must be higher than the previous zone');
+                return;
+              }
+
+              updateProfileMutation.mutate(profileForm);
+            }}
+            className="space-y-4"
+          >
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Zone 1 Max
+                  <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">(Recovery)</span>
+                </label>
+                <input
+                  type="number"
+                  min="50"
+                  max="220"
+                  value={profileForm.hr_zone_1_max || ''}
+                  onChange={(e) => setProfileForm({ ...profileForm, hr_zone_1_max: parseInt(e.target.value) })}
+                  className="input"
+                  placeholder="120"
+                  required
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">&lt;{profileForm.hr_zone_1_max || 120} bpm</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Zone 2 Max
+                  <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">(Easy)</span>
+                </label>
+                <input
+                  type="number"
+                  min="50"
+                  max="220"
+                  value={profileForm.hr_zone_2_max || ''}
+                  onChange={(e) => setProfileForm({ ...profileForm, hr_zone_2_max: parseInt(e.target.value) })}
+                  className="input"
+                  placeholder="140"
+                  required
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{profileForm.hr_zone_1_max || 120}-{profileForm.hr_zone_2_max || 140} bpm</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Zone 3 Max
+                  <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">(Tempo)</span>
+                </label>
+                <input
+                  type="number"
+                  min="50"
+                  max="220"
+                  value={profileForm.hr_zone_3_max || ''}
+                  onChange={(e) => setProfileForm({ ...profileForm, hr_zone_3_max: parseInt(e.target.value) })}
+                  className="input"
+                  placeholder="160"
+                  required
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{profileForm.hr_zone_2_max || 140}-{profileForm.hr_zone_3_max || 160} bpm</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Zone 4 Max
+                  <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">(Threshold)</span>
+                </label>
+                <input
+                  type="number"
+                  min="50"
+                  max="220"
+                  value={profileForm.hr_zone_4_max || ''}
+                  onChange={(e) => setProfileForm({ ...profileForm, hr_zone_4_max: parseInt(e.target.value) })}
+                  className="input"
+                  placeholder="175"
+                  required
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{profileForm.hr_zone_3_max || 160}-{profileForm.hr_zone_4_max || 175} bpm</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Zone 5 Max
+                  <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">(Max)</span>
+                </label>
+                <input
+                  type="number"
+                  min="50"
+                  max="220"
+                  value={profileForm.hr_zone_5_max || ''}
+                  onChange={(e) => setProfileForm({ ...profileForm, hr_zone_5_max: parseInt(e.target.value) })}
+                  className="input"
+                  placeholder="220"
+                  required
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">&gt;{profileForm.hr_zone_4_max || 175} bpm</p>
+              </div>
+            </div>
+
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 space-y-3">
+              <div>
+                <p className="text-sm text-blue-800 dark:text-blue-200 font-semibold mb-2">
+                  📊 Finding Your Strava Heart Rate Zones
+                </p>
+                <p className="text-sm text-blue-800 dark:text-blue-200">
+                  Go to Strava Settings → "My Performance" → "Heart Rate Zones" to find your personalized zones.
+                </p>
+              </div>
+
+              <div className="border-t border-blue-200 dark:border-blue-700 pt-3">
+                <p className="text-sm text-blue-800 dark:text-blue-200 font-semibold mb-1">
+                  ℹ️ How Strava Calculates Zones
+                </p>
+                <ul className="text-xs text-blue-700 dark:text-blue-300 space-y-1 ml-4 list-disc">
+                  <li>Default Max HR formula: <strong>220 - your age</strong> (or 190 bpm if age not set)</li>
+                  <li>Zones auto-update on your birthday unless you manually set a Max HR</li>
+                  <li>Strava Premium subscribers can set different zones for runs vs. rides</li>
+                  <li>For best accuracy, consider a max HR test or use your highest recorded HR from a hard effort</li>
+                </ul>
+              </div>
+
+              <div className="border-t border-blue-200 dark:border-blue-700 pt-3">
+                <p className="text-sm text-blue-800 dark:text-blue-200 font-semibold mb-2">
+                  🧮 Auto-Calculate Zones (Strava Method)
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Strava's default: 220 - age, or 190 if no age
+                    const maxHR = profileData?.age ? 220 - profileData.age : 190;
+
+                    // Standard 5-zone model percentages
+                    // Zone 1 (Recovery): < 60% max HR
+                    // Zone 2 (Aerobic/Easy): 60-70% max HR
+                    // Zone 3 (Tempo): 70-80% max HR
+                    // Zone 4 (Threshold): 80-90% max HR
+                    // Zone 5 (Anaerobic): > 90% max HR
+                    setProfileForm({
+                      hr_zone_1_max: Math.round(maxHR * 0.60),
+                      hr_zone_2_max: Math.round(maxHR * 0.70),
+                      hr_zone_3_max: Math.round(maxHR * 0.80),
+                      hr_zone_4_max: Math.round(maxHR * 0.90),
+                      hr_zone_5_max: maxHR,
+                    });
+
+                    const calculation = profileData?.age
+                      ? `220 - ${profileData.age} = ${maxHR} bpm`
+                      : `${maxHR} bpm (default, no age set)`;
+                    toast.success(`Zones calculated using max HR of ${calculation}`);
+                  }}
+                  className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded transition-colors"
+                >
+                  {profileData?.age
+                    ? `Auto-fill: 220 - ${profileData.age} = ${220 - profileData.age} bpm`
+                    : `Auto-fill: 190 bpm max HR (no age set)`
+                  }
+                </button>
+                <div className="text-xs text-blue-700 dark:text-blue-300 mt-2 space-y-1">
+                  <p className="font-medium">Standard zone boundaries:</p>
+                  <ul className="ml-4 list-disc space-y-0.5">
+                    <li>Zone 1: &lt;60% max HR (Recovery)</li>
+                    <li>Zone 2: 60-70% max HR (Aerobic/Easy)</li>
+                    <li>Zone 3: 70-80% max HR (Tempo)</li>
+                    <li>Zone 4: 80-90% max HR (Threshold)</li>
+                    <li>Zone 5: &gt;90% max HR (Anaerobic)</li>
+                  </ul>
+                  <p className="mt-2 italic">Adjust these values to match your Strava zones if different.</p>
+                </div>
+              </div>
+            </div>
+
+            <button type="submit" className="btn btn-primary flex items-center gap-2">
+              <Save size={16} />
+              Save HR Zones
+            </button>
+          </form>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 text-sm">
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
+                <p className="text-gray-600 dark:text-gray-400 text-xs mb-1">Zone 1 (Recovery)</p>
+                <p className="font-semibold text-gray-900 dark:text-gray-100">
+                  &lt;{profileData?.hr_zone_1_max || 120} bpm
+                </p>
+              </div>
+              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3">
+                <p className="text-blue-600 dark:text-blue-400 text-xs mb-1">Zone 2 (Easy)</p>
+                <p className="font-semibold text-blue-900 dark:text-blue-100">
+                  {profileData?.hr_zone_1_max || 120}-{profileData?.hr_zone_2_max || 140} bpm
+                </p>
+              </div>
+              <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-3">
+                <p className="text-green-600 dark:text-green-400 text-xs mb-1">Zone 3 (Tempo)</p>
+                <p className="font-semibold text-green-900 dark:text-green-100">
+                  {profileData?.hr_zone_2_max || 140}-{profileData?.hr_zone_3_max || 160} bpm
+                </p>
+              </div>
+              <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-3">
+                <p className="text-orange-600 dark:text-orange-400 text-xs mb-1">Zone 4 (Threshold)</p>
+                <p className="font-semibold text-orange-900 dark:text-orange-100">
+                  {profileData?.hr_zone_3_max || 160}-{profileData?.hr_zone_4_max || 175} bpm
+                </p>
+              </div>
+              <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-3">
+                <p className="text-red-600 dark:text-red-400 text-xs mb-1">Zone 5 (Max)</p>
+                <p className="font-semibold text-red-900 dark:text-red-100">
+                  &gt;{profileData?.hr_zone_4_max || 175} bpm
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+              <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
+                <strong>ℹ️ About Your Zones:</strong> These are used throughout RunCoach for workout analysis and coaching feedback.
+              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                To find your Strava zones: Settings → My Performance → Heart Rate Zones.
+                {profileData?.age && ` Strava's default uses 220 - ${profileData.age} = ${220 - profileData.age} bpm max HR.`}
+              </p>
+            </div>
+          </div>
         )}
       </div>
 
@@ -380,7 +650,7 @@ export default function ProfilePage() {
 
         {editingProfile ? (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Block Start Date
@@ -410,7 +680,7 @@ export default function ProfilePage() {
           </div>
         ) : profileData?.training_block_start && profileData?.training_block_end ? (
           <div>
-            <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mb-4">
               <div>
                 <p className="text-gray-600 dark:text-gray-400">Start Date</p>
                 <p className="font-semibold text-gray-900 dark:text-gray-100">
@@ -648,10 +918,10 @@ export default function ProfilePage() {
                 )}
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <p className="text-sm opacity-90 mb-1">Target Time</p>
-                <p className="text-3xl font-bold">
+                <p className="text-2xl sm:text-3xl font-bold">
                   {activeGoal.target_time_seconds &&
                     `${Math.floor(activeGoal.target_time_seconds / 3600)}:${String(Math.floor((activeGoal.target_time_seconds % 3600) / 60)).padStart(2, '0')}:${String(activeGoal.target_time_seconds % 60).padStart(2, '0')}`
                   }

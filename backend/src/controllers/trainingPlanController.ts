@@ -172,6 +172,15 @@ export async function updateWorkoutController(req: Request, res: Response): Prom
   try {
     const workoutId = parseInt(req.params.id);
     const workout = await updatePlannedWorkout(workoutId, req.body);
+
+    // If the workout's scheduled_date or distance was changed, recalculate peak weeks
+    // (Peak weeks are determined by weekly mileage, so both date and distance changes affect them)
+    if ((req.body.scheduled_date || req.body.target_distance_meters) && workout.training_plan_id) {
+      const { recalculatePeakWeeks } = await import('../services/trainingPlanService');
+      await recalculatePeakWeeks(workout.training_plan_id);
+      console.log('🔄 Peak weeks recalculated after workout update');
+    }
+
     res.json({ workout });
   } catch (error) {
     console.error('Update workout error:', error);
@@ -182,7 +191,21 @@ export async function updateWorkoutController(req: Request, res: Response): Prom
 export async function deleteWorkoutController(req: Request, res: Response): Promise<void> {
   try {
     const workoutId = parseInt(req.params.id);
+
+    // Get workout before deleting to retrieve training_plan_id
+    const { getPlannedWorkoutById } = await import('../models/PlannedWorkout');
+    const workout = await getPlannedWorkoutById(workoutId);
+    const trainingPlanId = workout?.training_plan_id;
+
     await deletePlannedWorkout(workoutId);
+
+    // Recalculate peak weeks after deletion if workout was part of a plan with peak identification
+    if (trainingPlanId) {
+      const { recalculatePeakWeeks } = await import('../services/trainingPlanService');
+      await recalculatePeakWeeks(trainingPlanId);
+      console.log('🔄 Peak weeks recalculated after workout deletion');
+    }
+
     res.json({ success: true });
   } catch (error) {
     console.error('Delete workout error:', error);

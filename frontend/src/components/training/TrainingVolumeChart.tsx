@@ -411,14 +411,12 @@ export const TrainingVolumeChart: React.FC<TrainingVolumeChartProps> = ({
                   </span>
                 </div>
               </div>
-              {onConfigChange && (
-                <button
-                  onClick={handleApplyWeeksConfig}
-                  className="w-full px-4 py-2 bg-green-500 hover:bg-green-600 text-white text-sm font-medium rounded-lg transition-colors"
-                >
-                  Apply Changes
-                </button>
-              )}
+              <button
+                onClick={handleApplyWeeksConfig}
+                className="w-full px-4 py-2 bg-green-500 hover:bg-green-600 text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                Apply Changes
+              </button>
             </div>
           </div>
         </div>

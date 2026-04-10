@@ -265,8 +265,8 @@ export const TrainingPlanList: React.FC = () => {
             }`}
           >
             {/* Main row */}
-            <div className="p-4">
-              <div className="flex items-start justify-between">
+            <div className="p-3 sm:p-4">
+              <div className="flex flex-col sm:flex-row items-start sm:justify-between gap-3">
                 <div className="flex-1">
                   {editingPlan === plan.id ? (
                     <div className="space-y-3">
@@ -349,20 +349,21 @@ export const TrainingPlanList: React.FC = () => {
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap gap-4 mt-3 text-sm text-gray-600 dark:text-gray-400">
+                      <div className="flex flex-wrap gap-2 sm:gap-4 mt-3 text-xs sm:text-sm text-gray-600 dark:text-gray-400">
                         <span className="flex items-center gap-1">
-                          <Calendar size={14} />
-                          {format(new Date(plan.start_date), 'MMM dd, yyyy')} -{' '}
-                          {format(new Date(plan.end_date), 'MMM dd, yyyy')}
+                          <Calendar size={12} className="sm:w-[14px] sm:h-[14px]" />
+                          <span className="whitespace-nowrap">{format(new Date(plan.start_date), 'MMM dd, yyyy')}</span>
+                          <span className="hidden sm:inline">-</span>
+                          <span className="whitespace-nowrap">{format(new Date(plan.end_date), 'MMM dd, yyyy')}</span>
                         </span>
-                        <span>
+                        <span className="whitespace-nowrap">
                           📅 {plan.total_weeks || 'N/A'} weeks
                         </span>
-                        <span>
+                        <span className="whitespace-nowrap">
                           📁 {SOURCE_LABELS[plan.source]}
                         </span>
                         {plan.file_metadata?.filename && (
-                          <span>
+                          <span className="truncate max-w-[150px] sm:max-w-none">
                             📄 {plan.file_metadata.filename}
                           </span>
                         )}
@@ -401,53 +402,55 @@ export const TrainingPlanList: React.FC = () => {
 
                 {/* Actions */}
                 {editingPlan !== plan.id && (
-                  <div className="flex items-center gap-2 ml-4">
+                  <div className="flex flex-wrap items-center gap-2 sm:ml-4 w-full sm:w-auto">
                     <button
                       onClick={() => setExpandedPlan(expandedPlan === plan.id ? null : plan.id)}
-                      className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
+                      className="p-1.5 sm:p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
                       title="Show details"
                     >
-                      <MoreVertical size={18} />
+                      <MoreVertical size={16} className="sm:w-[18px] sm:h-[18px]" />
                     </button>
                     {(plan.source === 'csv_upload' || plan.source === 'pdf_upload') && (
                       <button
                         onClick={() => handleReupload(plan.id)}
                         disabled={uploading && reuploadingPlan === plan.id}
-                        className="px-3 py-1.5 text-sm text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors flex items-center gap-1 disabled:opacity-50"
+                        className="px-2 py-1.5 sm:px-3 text-xs sm:text-sm text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors flex items-center gap-1 disabled:opacity-50 whitespace-nowrap"
                         title="Re-upload training plan"
                       >
-                        <Upload size={16} />
-                        {uploading && reuploadingPlan === plan.id ? 'Uploading...' : 'Re-upload'}
+                        <Upload size={14} className="sm:w-4 sm:h-4" />
+                        <span className="hidden sm:inline">{uploading && reuploadingPlan === plan.id ? 'Uploading...' : 'Re-upload'}</span>
+                        <span className="sm:hidden">↑</span>
                       </button>
                     )}
                     <button
                       onClick={() => handleConfigure(plan)}
-                      className="px-3 py-1.5 text-sm text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-lg transition-colors"
+                      className="px-2 py-1.5 sm:px-3 text-xs sm:text-sm text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-lg transition-colors whitespace-nowrap"
                       title="Configure training phases"
                     >
-                      ⚙️ Configure
+                      <span className="hidden sm:inline">⚙️ Configure</span>
+                      <span className="sm:hidden">⚙️</span>
                     </button>
                     <button
                       onClick={() => handleEdit(plan)}
-                      className="p-2 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg"
+                      className="p-1.5 sm:p-2 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg"
                       title="Edit plan"
                     >
-                      <Edit2 size={18} />
+                      <Edit2 size={16} className="sm:w-[18px] sm:h-[18px]" />
                     </button>
                     {deleteConfirm === plan.id ? (
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-gray-600 dark:text-gray-400">
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
                           Delete?
                         </span>
                         <button
                           onClick={() => handleDelete(plan.id)}
-                          className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700"
+                          className="px-2 py-1 sm:px-3 sm:py-1.5 text-xs sm:text-sm bg-red-600 text-white rounded-lg hover:bg-red-700"
                         >
                           Yes
                         </button>
                         <button
                           onClick={() => setDeleteConfirm(null)}
-                          className="px-3 py-1.5 text-sm bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-500"
+                          className="px-2 py-1 sm:px-3 sm:py-1.5 text-xs sm:text-sm bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-500"
                         >
                           No
                         </button>
@@ -455,10 +458,10 @@ export const TrainingPlanList: React.FC = () => {
                     ) : (
                       <button
                         onClick={() => setDeleteConfirm(plan.id)}
-                        className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
+                        className="p-1.5 sm:p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
                         title="Delete plan"
                       >
-                        <Trash2 size={18} />
+                        <Trash2 size={16} className="sm:w-[18px] sm:h-[18px]" />
                       </button>
                     )}
                   </div>

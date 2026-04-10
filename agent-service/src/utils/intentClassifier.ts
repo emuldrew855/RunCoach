@@ -63,7 +63,9 @@ const INTENT_PATTERNS = {
       'modify', 'change', 'adjust', 'move', 'shift', 'add workout',
       'delete workout', 'remove workout', 'create workout',
       'review my plan', 'look at my plan', 'is my plan',
-      'would you change', 'should i change', 'recommendations for'
+      'would you change', 'should i change', 'recommendations for',
+      'planned week', 'planned workouts', 'plan structure', 'workout distribution',
+      'planned training', 'scheduled workouts'
     ],
     phrases: [
       /review.*plan/i,
@@ -81,8 +83,22 @@ const INTENT_PATTERNS = {
       /next week'?s/i,
       /upcoming week/i,
       /(long|tempo|easy|interval) run.*(next|upcoming|scheduled)/i,
+      /analyze.*planned (week|workouts)/i,
+      /review.*planned (week|workouts|training)/i,
+      /look at.*(planned|my scheduled)/i,
+      /(what|how).*(think|look).*training (week|plan)/i,
+      /planned workout.*balance/i,
+      /week.*planned/i,
+      /planned.*training.*week/i,
+      /don'?t.*focus.*(on )?(completed|done|finished)/i, // "don't focus on completed" = wants plan review
+      /review.*(my|the).*training/i,
+      /analyze.*(my|the).*(upcoming|scheduled|planned)/i,
     ],
-    exclusions: []
+    exclusions: [
+      /how'?s.*week going/i, // Progress check, not plan review
+      // Note: Removed /completed/i, /actual/i, /progress/i, /adherence/i
+      // These can appear in plan review context (e.g., "don't focus on completed")
+    ]
   },
 
   progress_tracking: {
@@ -90,11 +106,12 @@ const INTENT_PATTERNS = {
       'progress', 'this week', 'last week', 'this month', 'adherence',
       'on track', 'how am i doing', "how's my week", 'weekly analysis',
       'monthly summary', 'consistency', 'volume', 'mileage',
-      'total distance', 'training load'
+      'total distance', 'training load', 'completed workouts',
+      'what did i do', 'what have i done'
     ],
     phrases: [
       /how'?s? (my|this) week/i,
-      /weekly (analysis|progress|summary|review)/i,
+      /weekly (analysis|progress|summary)/i, // Removed 'review' - too ambiguous
       /monthly (analysis|progress|summary)/i,
       /am i on track/i,
       /how am i doing/i,
@@ -103,8 +120,19 @@ const INTENT_PATTERNS = {
       /(this|last) week'?s? (progress|summary)/i,
       /total (distance|mileage|volume)/i,
       /training load/i,
+      /what (did i|have i) (do|complete|run)/i,
+      /how much (did i|have i) run/i,
     ],
-    exclusions: []
+    exclusions: [
+      /planned/i,        // User asking about planned = plan_review
+      /upcoming/i,       // Forward-looking = plan_review
+      /next week/i,      // Future timeframe = plan_review
+      /schedule/i,       // Planning context = plan_review
+      /modify/i,         // Action-oriented = plan_review
+      /change/i,         // Action-oriented = plan_review
+      /adjust/i,         // Action-oriented = plan_review
+      /don'?t.*focus.*(completed|done)/i, // Explicitly rejecting completed focus
+    ]
   },
 
   general_chat: {
@@ -226,14 +254,28 @@ export function getExpectedContextSize(intent: Intent): number {
  */
 export function testIntentClassifier() {
   const testCases = [
+    // Run Analysis
     { message: "How was my run yesterday?", expected: "run_analysis" },
     { message: "Analyze my tempo run from Tuesday", expected: "run_analysis" },
+
+    // Plan Review - standard cases
     { message: "Review next week's training plan", expected: "plan_review" },
     { message: "Would you make any changes to my plan?", expected: "plan_review" },
     { message: "Move my long run to Friday", expected: "plan_review" },
+
+    // Plan Review - edge cases (critical fix)
+    { message: "Review my planned training week, don't focus on completed workouts", expected: "plan_review" },
+    { message: "Analyze my upcoming schedule", expected: "plan_review" },
+    { message: "Review my planned workouts for next week", expected: "plan_review" },
+    { message: "Is my training plan structured well?", expected: "plan_review" },
+
+    // Progress Tracking
     { message: "How's my week going?", expected: "progress_tracking" },
-    { message: "Weekly analysis", expected: "progress_tracking" },
+    { message: "What did I complete this week?", expected: "progress_tracking" },
     { message: "Am I on track for my marathon?", expected: "progress_tracking" },
+    { message: "How much mileage did I run last week?", expected: "progress_tracking" },
+
+    // General Chat
     { message: "Should I run today?", expected: "general_chat" },
     { message: "Tell me about negative splits", expected: "general_chat" },
     { message: "Give me some motivation", expected: "general_chat" },

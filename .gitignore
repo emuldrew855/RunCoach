@@ -38,3 +38,34 @@ postgres_data/
 # Temporary files
 *.tmp
 .temp/
+
+# Azure deployment (contains secrets)
+deploy-azure.sh
+deploy-azure.ps1
+deploy-code.ps1
+azure-deployment-config.json
+azure-config.json
+*.zip
+
+# Production env files
+.env.production
+
+# Windows nul artifacts
+nul
+
+# Debug/test scripts (root level)
+backend/*.js
+backend/test-*.js
+backend/debug-*.js
+backend/check-*.js
+
+# Generated TypeScript files in types folder
+backend/src/types/*.js
+backend/src/types/*.js.map
+backend/src/types/*.d.ts.map
+
+# Claude Code settings
+.claude/
+
+# Data exports
+backend/exports/

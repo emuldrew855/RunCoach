@@ -293,6 +293,63 @@ export async function createPlanFromFile(
 }
 
 /**
+ * Recalculate peak weeks for a training plan based on current workout schedules
+ * This should be called when workouts are rescheduled to ensure peak week indicators stay accurate
+ */
+export async function recalculatePeakWeeks(planId: number): Promise<void> {
+  const { getTrainingPlanById } = await import('../models/TrainingPlan');
+  const { getPlannedWorkoutsByPlan } = await import('../models/PlannedWorkout');
+  const { updateTrainingPlan } = await import('../models/TrainingPlan');
+
+  const plan = await getTrainingPlanById(planId);
+  if (!plan || !plan.identify_peaks) {
+    return; // No need to recalculate if peak identification is disabled
+  }
+
+  const workouts = await getPlannedWorkoutsByPlan(planId);
+  const startDate = new Date(plan.start_date);
+  const peakWeeksCount = plan.peak_weeks_count || 1;
+
+  // Group workouts by week and sum distances
+  // Note: We need to query dates as text to avoid pg driver timezone conversion issues
+  const { getPlannedWorkoutsByPlanWithDateText } = await import('../models/PlannedWorkout');
+  const workoutsWithText = await getPlannedWorkoutsByPlanWithDateText(planId);
+
+  const weeklyVolumes = new Map<number, number>();
+
+  // Get start date as YYYY-MM-DD string
+  const startDateStr = startDate.toISOString().split('T')[0];
+  const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+  const startDateMs = Date.UTC(startYear, startMonth - 1, startDay);
+
+  workoutsWithText.forEach((workout: any) => {
+    // Use the date_text field which has the raw date string from PostgreSQL
+    const workoutDateStr = workout.date_text || workout.scheduled_date.toISOString().split('T')[0];
+    const [wYear, wMonth, wDay] = workoutDateStr.split('-').map(Number);
+    const workoutDateMs = Date.UTC(wYear, wMonth - 1, wDay);
+
+    const daysDiff = Math.floor((workoutDateMs - startDateMs) / (24 * 60 * 60 * 1000));
+    const weekNumber = Math.floor(daysDiff / 7);
+
+    const distance = parseFloat(String(workout.target_distance_meters)) || 0;
+    const currentVolume = weeklyVolumes.get(weekNumber) || 0;
+    weeklyVolumes.set(weekNumber, currentVolume + distance);
+  });
+
+  // Sort weeks by volume (descending) and get top N peak weeks
+  const sortedWeeks = Array.from(weeklyVolumes.entries())
+    .sort((a, b) => b[1] - a[1]) // Sort by volume descending
+    .slice(0, peakWeeksCount) // Take top N weeks
+    .map(([weekNum]) => weekNum + 1) // Convert to 1-indexed week numbers
+    .sort((a, b) => a - b); // Sort week numbers ascending for display
+
+  console.log('🔄 Recalculated peak weeks for plan', planId, ':', sortedWeeks);
+
+  // Update the training plan with new peak week numbers
+  await updateTrainingPlan(planId, { peak_week_numbers: sortedWeeks });
+}
+
+/**
  * Auto-match completed activities to planned workouts
  * Matches based on date proximity (within 1 day) and distance similarity
  */

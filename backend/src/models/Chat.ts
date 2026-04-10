@@ -84,8 +84,17 @@ export async function updateMessagePendingActions(messageId: number, pendingActi
 }
 
 export async function deleteConversation(conversationId: string): Promise<void> {
-  // Delete all messages first (foreign key constraint)
+  // Clean up related tables that don't have ON DELETE CASCADE
+  // These use TEXT type for conversation_id, not foreign key
+  await query('DELETE FROM conversation_embeddings WHERE conversation_id = $1', [conversationId]);
+  await query('DELETE FROM conversation_summaries WHERE conversation_id = $1', [conversationId]);
+
+  // Set action_history.agent_conversation_id to NULL (if migration hasn't added SET NULL yet)
+  await query('UPDATE action_history SET agent_conversation_id = NULL WHERE agent_conversation_id = $1', [conversationId]);
+
+  // Delete all messages (has ON DELETE CASCADE but explicit is clearer)
   await query('DELETE FROM chat_messages WHERE conversation_id = $1', [conversationId]);
-  // Delete conversation
+
+  // Delete conversation (cascades to pending_actions, coaching_responses, token_usage)
   await query('DELETE FROM conversations WHERE id = $1', [conversationId]);
 }

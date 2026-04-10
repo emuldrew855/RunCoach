@@ -6,45 +6,98 @@
   body {
     @apply bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors;
   }
+
+  /* Custom Scrollbar - Premium Design */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #525252 transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: #525252;
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: #737373;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  /* Dark mode scrollbar */
+  .dark *::-webkit-scrollbar-thumb {
+    background: #404040;
+  }
+
+  .dark *::-webkit-scrollbar-thumb:hover {
+    background: #525252;
+  }
+
+  /* Accent scrollbar for Command Center areas */
+  .command-center-scroll::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #06b6d4 0%, #0891b2 100%);
+    border: 1px solid rgba(6, 182, 212, 0.3);
+  }
+
+  .command-center-scroll::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #0891b2 0%, #0e7490 100%);
+    box-shadow: 0 0 8px rgba(6, 182, 212, 0.4);
+  }
 }
 
 @layer components {
-  /* Card variants */
+  /* Card variants - Glassmorphism with subtle borders */
   .card {
-    @apply bg-white dark:bg-neutral-800 rounded-lg shadow-sm
-           border border-neutral-200 dark:border-neutral-700 p-6 transition-colors;
+    @apply bg-white/80 dark:bg-neutral-800/80 backdrop-blur-sm rounded-lg shadow-xs
+           border border-neutral-200/50 dark:border-neutral-700/50 p-6 transition-all;
   }
 
   .card-subtle {
-    @apply bg-neutral-50 dark:bg-neutral-800/50 rounded-lg
-           border border-neutral-200 dark:border-neutral-700 p-5;
+    @apply bg-neutral-50/50 dark:bg-neutral-800/30 backdrop-blur-sm rounded-lg
+           border border-neutral-200/30 dark:border-neutral-700/30 p-5;
   }
 
   .card-stat {
-    @apply bg-white dark:bg-neutral-800 rounded-lg
-           border border-neutral-200 dark:border-neutral-700 p-5
-           transition-all hover:shadow-md;
+    @apply bg-white/60 dark:bg-neutral-800/60 backdrop-blur-sm rounded-lg
+           border border-neutral-200/40 dark:border-neutral-700/40 p-6
+           transition-all hover:shadow-sm hover:bg-white/80 dark:hover:bg-neutral-800/80;
   }
 
-  /* Button variants */
+  /* Button variants - Architectural & Minimal */
   .btn {
-    @apply px-4 py-2.5 rounded-lg font-medium transition-all
-           inline-flex items-center justify-center gap-2;
+    @apply px-4 py-2.5 rounded font-medium transition-all
+           inline-flex items-center justify-center gap-2
+           border border-transparent;
   }
 
   .btn-primary {
-    @apply bg-brand-orange text-white hover:bg-brand-orange-dark
-           shadow-sm hover:shadow-md;
+    @apply bg-brand-orange text-white border-brand-orange
+           hover:bg-brand-orange-dark hover:border-brand-orange-dark
+           shadow-xs hover:shadow-sm;
   }
 
   .btn-secondary {
-    @apply bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200
-           hover:bg-neutral-300 dark:hover:bg-neutral-600;
+    @apply bg-transparent border-neutral-300 dark:border-neutral-600
+           text-neutral-700 dark:text-neutral-300
+           hover:bg-neutral-50 dark:hover:bg-neutral-800/50
+           hover:border-neutral-400 dark:hover:border-neutral-500;
   }
 
   .btn-ghost {
-    @apply bg-transparent text-neutral-700 dark:text-neutral-300
-           hover:bg-neutral-100 dark:hover:bg-neutral-800;
+    @apply bg-transparent text-neutral-600 dark:text-neutral-400
+           hover:bg-neutral-100/50 dark:hover:bg-neutral-800/50
+           hover:text-neutral-900 dark:hover:text-neutral-100;
   }
 
   /* Input */
@@ -64,23 +117,44 @@
   }
 }
 
-/* Calendar styles - minimal overrides */
+/* Calendar styles - Athletic data density */
 .rbc-month-view .rbc-month-row {
-  min-height: 110px;
+  min-height: 120px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+}
+
+.dark .rbc-month-view .rbc-month-row {
+  border-bottom-color: rgba(255, 255, 255, 0.03);
 }
 
 .rbc-event {
   padding: 3px 6px;
-  font-size: 11px;
-  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+  border-radius: 2px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: all 0.2s;
 }
 
-/* Calendar Toolbar - Better Dark Mode Support */
+.rbc-event:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.dark .rbc-event {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Calendar Toolbar - Premium Glassmorphic Design */
 .rbc-toolbar {
   padding: 1rem;
   margin-bottom: 1rem;
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 0.375rem;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -88,107 +162,117 @@
 }
 
 .rbc-toolbar button {
-  background: white;
-  color: #1f2937;
-  border: none;
+  background: transparent;
+  color: #525252;
+  border: 1px solid #d4d4d4;
   padding: 0.5rem 1rem;
-  font-weight: 600;
-  border-radius: 0.375rem;
+  font-weight: 500;
+  border-radius: 0.25rem;
   cursor: pointer;
   transition: all 0.2s;
   font-size: 0.875rem;
 }
 
 .rbc-toolbar button:hover {
-  background: #f3f4f6;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.02);
+  border-color: #a3a3a3;
 }
 
 .rbc-toolbar button:active {
-  background: #e5e7eb;
-  transform: translateY(0);
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .rbc-toolbar button.rbc-active {
-  background: #fc5200;
+  background: #FC4C02;
   color: white;
+  border-color: #FC4C02;
 }
 
 .rbc-toolbar button.rbc-active:hover {
-  background: #ea4c00;
+  background: #E04300;
+  border-color: #E04300;
 }
 
 /* Month header - centered */
 .rbc-toolbar-label {
   flex-grow: 1;
   text-align: center;
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: white;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #171717;
+  letter-spacing: -0.025em;
   padding: 0 1rem;
 }
 
 /* Dark mode toolbar */
 .dark .rbc-toolbar {
-  background: linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%);
+  background: rgba(38, 38, 38, 0.6);
+  border-color: rgba(255, 255, 255, 0.05);
 }
 
 .dark .rbc-toolbar button {
-  background: #374151;
-  color: #f9fafb;
+  background: transparent;
+  color: #d4d4d4;
+  border-color: #525252;
 }
 
 .dark .rbc-toolbar button:hover {
-  background: #4b5563;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: #737373;
 }
 
 .dark .rbc-toolbar button:active {
-  background: #374151;
+  background: rgba(255, 255, 255, 0.1);
 }
 
-/* Days of the week header - colored background */
+.dark .rbc-toolbar-label {
+  color: #fafafa;
+}
+
+/* Days of the week header - Minimal */
 .rbc-header {
   padding: 0.75rem 0.5rem;
-  font-weight: 700;
-  font-size: 0.875rem;
-  background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-  border-bottom: 2px solid #d1d5db;
-  color: #374151;
+  font-weight: 500;
+  font-size: 0.75rem;
+  background: transparent;
+  border-bottom: 1px solid #e5e5e5;
+  color: #737373;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.1em;
 }
 
 .dark .rbc-header {
-  background: linear-gradient(135deg, #374151 0%, #1f2937 100%);
-  border-bottom-color: #4b5563;
-  color: #d1d5db;
+  background: transparent;
+  border-bottom-color: #404040;
+  color: #a3a3a3;
 }
 
-/* Show more link styling */
+/* Show more link styling - Minimal */
 .rbc-show-more {
-  background-color: rgba(59, 130, 246, 0.1) !important;
-  color: #2563eb !important;
-  font-weight: 600 !important;
+  background-color: transparent !important;
+  color: #FC4C02 !important;
+  font-weight: 500 !important;
   font-size: 10px !important;
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace !important;
   padding: 2px 5px !important;
   margin: 1px 2px !important;
-  border-radius: 3px !important;
+  border: 1px solid #FC4C02 !important;
+  border-radius: 2px !important;
   cursor: pointer !important;
   text-align: center !important;
 }
 
 .rbc-show-more:hover {
-  background-color: rgba(59, 130, 246, 0.2) !important;
+  background-color: rgba(252, 76, 2, 0.05) !important;
 }
 
-/* Overlay for popup */
+/* Overlay for popup - Glassmorphic */
 .rbc-overlay {
-  background: white !important;
-  border: 2px solid #e5e7eb !important;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15) !important;
-  border-radius: 8px !important;
+  background: rgba(255, 255, 255, 0.95) !important;
+  backdrop-filter: blur(8px) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+  border-radius: 6px !important;
   padding: 8px !important;
   max-height: 300px !important;
   overflow-y: auto !important;
@@ -197,9 +281,12 @@
 
 .rbc-overlay-header {
   font-weight: 600 !important;
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace !important;
+  font-size: 0.75rem !important;
   padding: 4px 8px !important;
-  border-bottom: 1px solid #e5e7eb !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1) !important;
   margin-bottom: 8px !important;
+  color: #171717 !important;
 }
 
 .rbc-event-label {
@@ -208,226 +295,289 @@
 
 /* Dark mode overlay */
 .dark .rbc-overlay {
-  background: #1f2937 !important;
-  border-color: #374151 !important;
+  background: rgba(38, 38, 38, 0.95) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
 }
 
 .dark .rbc-overlay-header {
-  border-color: #374151 !important;
-  color: white !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: #fafafa !important;
 }
 
-/* Calendar cells - better dark mode */
+/* Calendar cells - Borderless, High Contrast */
 .rbc-day-bg {
-  background: white;
-  border-color: #e5e7eb;
+  background: #ffffff;
+  border: none !important;
   position: relative;
+}
+
+.rbc-day-bg:nth-child(even) {
+  background: #fafafa;
 }
 
 .dark .rbc-day-bg {
-  background: #111827;
-  border-color: #374151;
+  background: #0a0a0a;
 }
 
+.dark .rbc-day-bg:nth-child(even) {
+  background: #1a1a1a;
+}
+
+/* Today - Elevated with glow */
 .rbc-today {
-  background-color: #dbeafe !important;
+  background-color: #fafafa !important;
+  box-shadow: inset 0 0 0 2px #FC4C02, 0 4px 12px rgba(252, 76, 2, 0.15) !important;
+  position: relative !important;
+  z-index: 1 !important;
 }
 
 .dark .rbc-today {
-  background-color: #1e3a8a !important;
+  background-color: #1a1a1a !important;
+  box-shadow: inset 0 0 0 2px #FC4C02, 0 4px 12px rgba(252, 76, 2, 0.25) !important;
 }
 
-/* Peak week - border around entire week row */
+/* Ensure content inside today's cell is visible above the background */
+.rbc-today .rbc-date-cell {
+  position: relative;
+  z-index: 10;
+}
+
+.rbc-today .rbc-event-content,
+.rbc-today .rbc-event {
+  position: relative;
+  z-index: 10;
+}
+
+/* Peak week - Full row glow treatment */
 .rbc-month-row:has(.peak-week-start) {
   position: relative;
-  border: 3px solid #f97316 !important;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
-  margin: 4px 0;
+  background: linear-gradient(135deg,
+    rgba(251, 191, 36, 0.04) 0%,
+    rgba(245, 158, 11, 0.02) 100%);
+  box-shadow: inset 0 2px 0 #f59e0b, inset 0 -2px 0 #f59e0b, 0 4px 12px rgba(245, 158, 11, 0.12);
+  margin: 8px 0;
   padding: 2px 0;
   padding-top: 28px;
+  border-radius: 2px;
 }
 
 .dark .rbc-month-row:has(.peak-week-start) {
-  border-color: #ea580c !important;
-  background: linear-gradient(135deg, #7c2d12 0%, #9a3412 100%);
+  background: linear-gradient(135deg,
+    rgba(251, 191, 36, 0.08) 0%,
+    rgba(245, 158, 11, 0.04) 100%);
+  box-shadow: inset 0 2px 0 #d97706, inset 0 -2px 0 #d97706, 0 4px 12px rgba(245, 158, 11, 0.2);
 }
 
-/* Peak week badge centered inside the row */
+/* Peak week badge - Athletic */
 .rbc-month-row:has(.peak-week-start)::before {
-  content: '🏔️ PEAK';
+  content: '⚡ PEAK WEEK';
   position: absolute;
   top: 6px;
   left: 50%;
   transform: translateX(-50%);
-  background: #f97316;
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
   color: white;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
-  padding: 4px 14px;
-  border-radius: 9999px;
+  font-family: 'Inter', system-ui, sans-serif;
+  letter-spacing: 0.15em;
+  padding: 4px 16px;
+  border-radius: 2px;
   z-index: 10;
   white-space: nowrap;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+  text-transform: uppercase;
 }
 
 .dark .rbc-month-row:has(.peak-week-start)::before {
-  background: #ea580c;
+  background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.4);
 }
 
-/* Taper week - border around entire week row */
+/* Taper week - Full row glow treatment */
 .rbc-month-row:has(.taper-week-start) {
   position: relative;
-  border: 3px solid #a855f7 !important;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
-  margin: 4px 0;
+  background: linear-gradient(135deg,
+    rgba(124, 58, 237, 0.04) 0%,
+    rgba(109, 40, 217, 0.02) 100%);
+  box-shadow: inset 0 2px 0 #7c3aed, inset 0 -2px 0 #7c3aed, 0 4px 12px rgba(124, 58, 237, 0.12);
+  margin: 8px 0;
   padding: 2px 0;
   padding-top: 28px;
+  border-radius: 2px;
 }
 
 .dark .rbc-month-row:has(.taper-week-start) {
-  border-color: #9333ea !important;
-  background: linear-gradient(135deg, #581c87 0%, #6b21a8 100%);
+  background: linear-gradient(135deg,
+    rgba(124, 58, 237, 0.08) 0%,
+    rgba(109, 40, 217, 0.04) 100%);
+  box-shadow: inset 0 2px 0 #6d28d9, inset 0 -2px 0 #6d28d9, 0 4px 12px rgba(124, 58, 237, 0.2);
 }
 
-/* Taper week badge centered inside the row */
+/* Taper week badge - Athletic */
 .rbc-month-row:has(.taper-week-start)::before {
   content: '📉 TAPER';
   position: absolute;
   top: 6px;
   left: 50%;
   transform: translateX(-50%);
-  background: #a855f7;
+  background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
   color: white;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
-  padding: 4px 14px;
-  border-radius: 9999px;
+  font-family: 'Inter', system-ui, sans-serif;
+  letter-spacing: 0.15em;
+  padding: 4px 16px;
+  border-radius: 2px;
   z-index: 10;
   white-space: nowrap;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.3);
+  text-transform: uppercase;
 }
 
 .dark .rbc-month-row:has(.taper-week-start)::before {
-  background: #9333ea;
+  background: linear-gradient(135deg, #6d28d9 0%, #5b21b6 100%);
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.4);
 }
 
-/* Current week - subtle border around entire week row */
+/* Current week - Full row glow treatment (most prominent) */
 .rbc-month-row:has(.current-week-start) {
   position: relative;
-  border: 2px solid #3b82f6 !important;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  background: linear-gradient(135deg,
+    rgba(252, 76, 2, 0.05) 0%,
+    rgba(224, 67, 0, 0.03) 100%);
+  box-shadow: inset 0 3px 0 #FC4C02, inset 0 -3px 0 #FC4C02, 0 6px 16px rgba(252, 76, 2, 0.18);
   margin-top: 20px !important;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
   padding: 2px 0;
   padding-top: 28px;
+  border-radius: 2px;
 }
 
 .dark .rbc-month-row:has(.current-week-start) {
-  border-color: #2563eb !important;
-  background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+  background: linear-gradient(135deg,
+    rgba(252, 76, 2, 0.1) 0%,
+    rgba(224, 67, 0, 0.05) 100%);
+  box-shadow: inset 0 3px 0 #E04300, inset 0 -3px 0 #E04300, 0 6px 16px rgba(252, 76, 2, 0.3);
 }
 
-/* Current week badge centered inside the row */
+/* Current week badge - Athletic & Prominent */
 .rbc-month-row:has(.current-week-start)::before {
-  content: '📍 THIS WEEK';
+  content: '→ THIS WEEK';
   position: absolute;
   top: 6px;
   left: 50%;
   transform: translateX(-50%);
-  background: #3b82f6;
+  background: linear-gradient(135deg, #FC4C02 0%, #E04300 100%);
   color: white;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 4px 14px;
-  border-radius: 9999px;
+  font-size: 9px;
+  font-weight: 800;
+  font-family: 'Inter', system-ui, sans-serif;
+  letter-spacing: 0.15em;
+  padding: 5px 18px;
+  border-radius: 2px;
   z-index: 10;
   white-space: nowrap;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 3px 10px rgba(252, 76, 2, 0.4);
+  text-transform: uppercase;
 }
 
 .dark .rbc-month-row:has(.current-week-start)::before {
-  background: #2563eb;
+  background: linear-gradient(135deg, #E04300 0%, #c23900 100%);
+  box-shadow: 0 3px 10px rgba(252, 76, 2, 0.5);
 }
 
-/* Carb-loading day styling - just show emoji indicator */
+/* Carb-loading day styling - Fuel indicator */
 .rbc-day-bg.carb-loading-day::before {
-  content: '🍝';
+  content: '⚡';
   position: absolute;
-  top: 4px;
-  left: 4px;
-  font-size: 18px;
+  top: 6px;
+  right: 6px;
+  font-size: 12px;
   z-index: 10;
   cursor: pointer;
-  padding: 2px;
-  border-radius: 4px;
-  transition: transform 0.2s, background 0.2s;
+  opacity: 0.5;
+  transition: all 0.2s;
+  filter: grayscale(50%);
 }
 
 .rbc-day-bg.carb-loading-day::before:hover {
-  transform: scale(1.3);
-  background: rgba(251, 191, 36, 0.2);
+  opacity: 1;
+  transform: scale(1.2);
+  filter: grayscale(0%);
 }
 
 .rbc-off-range-bg {
-  background: #f9fafb;
+  background: #fafafa;
 }
 
 .dark .rbc-off-range-bg {
-  background: #0f172a;
+  background: #171717;
 }
 
-/* Date numbers in cells */
+/* Date numbers in cells - Athletic Typography */
 .rbc-date-cell {
   padding: 0.5rem;
 }
 
 .rbc-date-cell button {
-  color: #374151;
-  font-weight: 600;
+  color: #404040;
+  font-weight: 700;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.875rem;
+  letter-spacing: -0.025em;
 }
 
 .dark .rbc-date-cell button {
-  color: #d1d5db;
+  color: #d4d4d4;
 }
 
 .rbc-off-range .rbc-date-cell button {
-  color: #9ca3af;
+  color: #a3a3a3;
+  opacity: 0.4;
 }
 
 .dark .rbc-off-range .rbc-date-cell button {
-  color: #6b7280;
+  color: #525252;
 }
 
-/* Drag and Drop Styling */
+/* Today's date - Bold and elevated */
+.rbc-today .rbc-date-cell button {
+  color: #FC4C02;
+  font-weight: 800;
+  font-size: 1rem;
+}
+
+.dark .rbc-today .rbc-date-cell button {
+  color: #FB923C;
+}
+
+/* Drag and Drop Styling - Minimal */
 .rbc-addons-dnd .rbc-addons-dnd-resizable {
   cursor: move;
 }
 
 .rbc-addons-dnd-dragging {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: move !important;
 }
 
 .rbc-addons-dnd-over {
-  background-color: rgba(59, 130, 246, 0.1) !important;
+  background-color: rgba(252, 76, 2, 0.05) !important;
 }
 
 .dark .rbc-addons-dnd-over {
-  background-color: rgba(59, 130, 246, 0.2) !important;
+  background-color: rgba(252, 76, 2, 0.08) !important;
 }
 
 /* Show cursor change on draggable events */
 .rbc-event.rbc-addons-dnd-draggable {
   cursor: move;
-  transition: opacity 0.2s, transform 0.2s;
+  transition: opacity 0.2s;
 }
 
 .rbc-event.rbc-addons-dnd-draggable:hover {
-  transform: scale(1.02);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  opacity: 0.9;
 }
 
 /* Non-draggable events (completed activities) */

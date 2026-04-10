@@ -39,6 +39,12 @@ router.get('/context/:userId', async (req: Request, res: Response, next: NextFun
     const intent = req.query.intent as Intent | undefined;
     const userMessage = req.query.message as string | undefined;
 
+    console.log('\n========== AGENT REQUEST: GET CONTEXT ==========');
+    console.log('User ID:', userId);
+    console.log('Intent:', intent || 'full (legacy)');
+    console.log('User Message:', userMessage ? userMessage.substring(0, 100) + '...' : 'N/A');
+    console.log('================================================\n');
+
     let context;
     if (intent) {
       // Use intent-based context builder (60-87% token reduction)
@@ -107,7 +113,7 @@ router.post('/save-message', async (req: Request, res: Response, next: NextFunct
       content,
       context_snapshot: contextSnapshot,
       tool_calls: toolCalls,
-      pending_action_ids: pendingActionIds,
+      pending_actions: pendingActionIds,
       model_used: 'agent-service',
       is_agent_initiated: false,
     });

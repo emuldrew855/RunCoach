@@ -82,6 +82,11 @@ export interface UserProfile {
   coach_communication_style?: 'casual' | 'balanced' | 'professional';
   chart_preferences?: ChartPreferences;
   personal_bests?: PersonalBests;
+  hr_zone_1_max?: number; // Zone 1 upper bound (bpm)
+  hr_zone_2_max?: number; // Zone 2 upper bound (bpm)
+  hr_zone_3_max?: number; // Zone 3 upper bound (bpm)
+  hr_zone_4_max?: number; // Zone 4 upper bound (bpm)
+  hr_zone_5_max?: number; // Zone 5 upper bound (bpm)
 }
 
 export interface Goal {

@@ -12,7 +12,7 @@ import { authenticateToken } from '../middleware/auth';
 import { getAllUserInsights, getPatternsByCategory } from '../services/memoryRetrievalService';
 import { consolidateUserMemories } from '../services/memoryConsolidationService';
 import { successResponse } from '../utils/apiResponse';
-import { pool } from '../config/database';
+import pool from '../config/database';
 
 const router = express.Router();
 

@@ -15,8 +15,9 @@ export async function upsertProfile(profile: Partial<UserProfile> & { user_id: n
       user_id, age, weight_kg, height_cm, gender, running_experience_years,
       typical_weekly_mileage, injury_history, preferred_units, week_starts_on, timezone,
       training_block_start, training_block_end, coach_style, coach_strictness_level, coach_communication_style,
-      chart_preferences, personal_bests
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+      chart_preferences, personal_bests,
+      hr_zone_1_max, hr_zone_2_max, hr_zone_3_max, hr_zone_4_max, hr_zone_5_max
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
     ON CONFLICT (user_id)
     DO UPDATE SET
       age = COALESCE(EXCLUDED.age, user_profiles.age),
@@ -36,6 +37,11 @@ export async function upsertProfile(profile: Partial<UserProfile> & { user_id: n
       coach_communication_style = COALESCE(EXCLUDED.coach_communication_style, user_profiles.coach_communication_style),
       chart_preferences = COALESCE(EXCLUDED.chart_preferences, user_profiles.chart_preferences),
       personal_bests = COALESCE(EXCLUDED.personal_bests, user_profiles.personal_bests),
+      hr_zone_1_max = COALESCE(EXCLUDED.hr_zone_1_max, user_profiles.hr_zone_1_max),
+      hr_zone_2_max = COALESCE(EXCLUDED.hr_zone_2_max, user_profiles.hr_zone_2_max),
+      hr_zone_3_max = COALESCE(EXCLUDED.hr_zone_3_max, user_profiles.hr_zone_3_max),
+      hr_zone_4_max = COALESCE(EXCLUDED.hr_zone_4_max, user_profiles.hr_zone_4_max),
+      hr_zone_5_max = COALESCE(EXCLUDED.hr_zone_5_max, user_profiles.hr_zone_5_max),
       updated_at = NOW()
     RETURNING *`,
     [
@@ -57,6 +63,11 @@ export async function upsertProfile(profile: Partial<UserProfile> & { user_id: n
       profile.coach_communication_style ?? null,
       profile.chart_preferences ? JSON.stringify(profile.chart_preferences) : null,
       profile.personal_bests ? JSON.stringify(profile.personal_bests) : null,
+      profile.hr_zone_1_max ?? null,
+      profile.hr_zone_2_max ?? null,
+      profile.hr_zone_3_max ?? null,
+      profile.hr_zone_4_max ?? null,
+      profile.hr_zone_5_max ?? null,
     ]
   );
   return result.rows[0];

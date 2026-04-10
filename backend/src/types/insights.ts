@@ -21,6 +21,12 @@ export interface DailyRunInsight {
   userId: number;
   runDate: Date;
 
+  // Basic activity fields (joined from activities table)
+  distance_meters?: number;
+  moving_time_seconds?: number;
+  average_pace?: number; // min/km
+  activity_name?: string;
+
   /**
    * Pacing Analysis
    * Analyzes pace consistency, fade patterns, and split breakdown
@@ -96,6 +102,9 @@ export interface DailyRunInsight {
 
     /** % deviation from planned pace */
     paceDeviation: number;
+
+    /** Zones difference from target HR zone (negative = easier, positive = harder) */
+    hrZoneDeviation?: number;
 
     /** List of modifications made (e.g., "Shortened distance", "Slowed pace") */
     modifications: string[];

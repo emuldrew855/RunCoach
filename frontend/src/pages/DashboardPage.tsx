@@ -10,25 +10,20 @@ import { AlertDashboard } from '../components/training/AlertDashboard';
 import { HRZoneChart } from '../components/training/HRZoneChart';
 import { TrainingVolumeChart, WeeklyVolumeData } from '../components/training/TrainingVolumeChart';
 import { usePreferences } from '../context/PreferencesContext';
-import { getRunningQuote } from '../utils/runningQuotes';
 import { CollapsibleCard } from '../components/CollapsibleCard';
 import { DashboardSettings, useDashboardVisibility } from '../components/DashboardSettings';
 import ErrorDisplay, { InlineError, LoadingDisplay } from '../components/ErrorDisplay';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { FloatingActionButton } from '../components/mobile/FloatingActionButton';
+import { CoachInsightCard } from '../components/coaching/CoachInsightCard';
+import { TrainingStatusCard } from '../components/coaching/TrainingStatusCard';
+import { WeeklyExecutionCard } from '../components/coaching/WeeklyExecutionCard';
 
 export default function DashboardPage() {
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
   const { visibility, updateVisibility } = useDashboardVisibility();
   const { preferences, chartPreferences, updateChartPreferences, convertDistance, distanceUnit, convertPace, paceUnit } = usePreferences();
-  const [quote, setQuote] = React.useState(() => getRunningQuote());
-
-  // Refresh quote every 3 hours
-  React.useEffect(() => {
-    const interval = setInterval(() => {
-      setQuote(getRunningQuote());
-    }, 3 * 60 * 60 * 1000); // 3 hours
-
-    return () => clearInterval(interval);
-  }, []);
 
   const { data: activitiesData, isLoading: activitiesLoading, error: activitiesError, refetch } = useQuery({
     queryKey: ['activities'],
@@ -184,113 +179,25 @@ export default function DashboardPage() {
   const countdown = getCountdown();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6 pb-20 md:pb-0">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-neutral-900 dark:text-neutral-100">Dashboard</h1>
-        <div className="flex items-center gap-3">
+        <h1 className="text-2xl md:text-3xl font-bold text-neutral-900 dark:text-neutral-100 tracking-tight">Dashboard</h1>
+        <div className="flex items-center gap-2 md:gap-3">
           <DashboardSettings visibility={visibility} onChange={updateVisibility} />
-          <button onClick={handleSync} className="btn btn-primary flex items-center gap-2">
-            <RefreshCw size={16} />
-            Sync Strava
-          </button>
+          {!isMobile && (
+            <button onClick={handleSync} className="btn btn-primary flex items-center gap-2 group">
+              <RefreshCw size={16} className="group-hover:rotate-180 transition-transform duration-500" />
+              Sync Strava
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Race Goal & Training Progress Banner */}
-      {((visibility.marathonGoal && activeGoal && countdown) || (visibility.trainingBlock && profileData?.training_block_start && profileData?.training_block_end)) && (
-        <CollapsibleCard
-          id="race-training-banner"
-          title="Race Goal & Training Progress"
-          className="bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 text-white border-none shadow-xl"
-          headerClassName="text-white"
-        >
-          {/* Marathon Goal Section */}
-          {activeGoal && countdown && (
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-2">
-                  <Target size={24} />
-                  <p className="text-2xl font-bold">{formatGoalTime(activeGoal.target_time_seconds)}</p>
-                </div>
-                <p className="text-lg opacity-90">
-                  {activeGoal.race_name || 'Marathon'} • {format(new Date(activeGoal.target_date!), 'MMMM dd, yyyy')}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-6xl font-bold">{countdown.weeks}</p>
-                <p className="text-xl">weeks</p>
-                <p className="text-4xl font-bold mt-2">{countdown.days}</p>
-                <p className="text-lg">days</p>
-                <p className="text-sm opacity-75 mt-2">{countdown.totalDays} days total</p>
-              </div>
-            </div>
-          )}
+      {/* Coach's Note - AI-generated daily insight (TOP PRIORITY) */}
+      <CoachInsightCard />
 
-          {/* Training Block Progress */}
-          {profileData?.training_block_start && profileData?.training_block_end && (() => {
-            const start = new Date(profileData.training_block_start).getTime();
-            const end = new Date(profileData.training_block_end).getTime();
-            const now = Date.now();
-            const total = end - start;
-            const elapsed = now - start;
-            const percentage = Math.min(Math.max((elapsed / total) * 100, 0), 100);
-            const totalDays = Math.ceil(total / (1000 * 60 * 60 * 24));
-            const daysElapsed = Math.ceil(elapsed / (1000 * 60 * 60 * 24));
-            const daysRemaining = Math.ceil((end - now) / (1000 * 60 * 60 * 24));
-
-            return (
-              <div className={activeGoal && countdown ? "pt-6 border-t border-white/30" : ""}>
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-sm font-semibold opacity-90">Training Block Progress</p>
-                  <div className="flex items-center gap-3">
-                    <p className="text-2xl font-bold">
-                      {percentage.toFixed(0)}%
-                    </p>
-                    <p className="text-sm opacity-75">
-                      Day {daysElapsed} of {totalDays}
-                    </p>
-                  </div>
-                </div>
-                <div className="bg-white/20 rounded-full h-6 overflow-hidden mb-2">
-                  <div
-                    className="bg-white h-6 rounded-full transition-all duration-500 flex items-center justify-center"
-                    style={{ width: `${percentage}%` }}
-                  >
-                    {percentage > 10 && (
-                      <span className="text-xs font-bold text-orange-600">
-                        {percentage.toFixed(0)}%
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center justify-between text-xs opacity-75">
-                  <span>{new Date(profileData.training_block_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                  <span className="font-semibold">
-                    {daysRemaining > 0 ? `${daysRemaining} days left` : 'Complete! 🎉'}
-                  </span>
-                  <span>{new Date(profileData.training_block_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Final Stretch Alert */}
-          {countdown && countdown.totalDays < 90 && (
-            <div className="mt-4 p-3 bg-white/20 rounded-lg">
-              <p className="text-sm">
-                🏃 You're in the final stretch! Keep focusing on your training plan.
-              </p>
-            </div>
-          )}
-
-          {/* Inspirational Quote */}
-          <div className="mt-4 pt-4 border-t border-white/30">
-            <p className="text-sm italic opacity-90">
-              "{quote}"
-            </p>
-          </div>
-        </CollapsibleCard>
-      )}
+      {/* Training Status Card - "Am I on track?" (PRIMARY) */}
+      <TrainingStatusCard />
 
       {/* Training Alerts */}
       {visibility.alerts && (
@@ -299,7 +206,10 @@ export default function DashboardPage() {
         </CollapsibleCard>
       )}
 
-      {/* Upcoming Workouts */}
+      {/* Weekly Execution Card - How well am I executing? */}
+      <WeeklyExecutionCard />
+
+      {/* Upcoming Workouts (PRIMARY - This Week's Focus) */}
       {visibility.upcomingWorkouts && (
         <CollapsibleCard id="upcoming-workouts" title="Upcoming Workouts (Next 7 Days)">
           {workoutsError ? (
@@ -310,28 +220,34 @@ export default function DashboardPage() {
           ) : upcomingWorkouts && upcomingWorkouts.length > 0 ? (
           <>
             <div className="space-y-3">
-              {upcomingWorkouts.slice(0, 5).map((workout: any) => (
+              {upcomingWorkouts.slice(0, 5).map((workout: any, index: number) => (
                 <div
                   key={workout.id}
-                  className="card-subtle"
+                  className="card-subtle relative overflow-hidden group hover:shadow-md transition-all duration-300 border-l-2 border-signal-info/30"
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="font-semibold text-neutral-900 dark:text-neutral-100">
-                        {workout.name || workout.workout_type}
-                      </h3>
-                      <p className="text-sm text-secondary">
-                        {format(new Date(workout.scheduled_date), 'EEEE, MMM dd')}
-                      </p>
+                  <div className="absolute inset-0 bg-signal-info/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                  <div className="relative z-10 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded border border-signal-info/30 flex items-center justify-center text-signal-info font-mono text-sm font-semibold">
+                        {index + 1}
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-neutral-900 dark:text-neutral-100">
+                          {workout.name || workout.workout_type}
+                        </h3>
+                        <p className="text-label text-tertiary">
+                          {format(new Date(workout.scheduled_date), 'EEEE, MMM dd')}
+                        </p>
+                      </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right bg-neutral-50 dark:bg-neutral-800/50 px-3 py-2 rounded border border-neutral-200 dark:border-neutral-700">
                       {workout.target_distance_meters && (
-                        <p className="font-semibold text-neutral-900 dark:text-neutral-100">
+                        <p className="text-data text-neutral-900 dark:text-neutral-100">
                           {convertDistance(workout.target_distance_meters)} {distanceUnit}
                         </p>
                       )}
                       {workout.target_hr_zone && (
-                        <p className="text-sm text-secondary">
+                        <p className="text-label-xs text-tertiary uppercase tracking-wide">
                           Zone {workout.target_hr_zone}
                         </p>
                       )}
@@ -342,9 +258,10 @@ export default function DashboardPage() {
             </div>
             <button
               onClick={() => navigate('/training')}
-              className="w-full mt-4 btn btn-secondary"
+              className="w-full mt-4 btn btn-secondary group relative overflow-hidden"
             >
-              View Full Calendar
+              <span className="relative z-10">View Full Calendar</span>
+              <div className="absolute inset-0 bg-gradient-to-r from-strava to-orange-600 opacity-0 group-hover:opacity-10 transition-opacity duration-300"></div>
             </button>
           </>
           ) : (
@@ -366,61 +283,65 @@ export default function DashboardPage() {
           )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {/* This Month */}
-            <div className="card-stat group">
-              <div className="flex items-start justify-between mb-3">
-                <p className="text-sm font-medium text-secondary">This Month</p>
-                <div className="w-10 h-10 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-                  <TrendingUp className="text-green-600 dark:text-green-400" size={20} />
+            <div className="card-stat group relative overflow-hidden hover:shadow-md transition-all duration-300 cursor-pointer border-l-2 border-signal-success/30">
+              <div className="absolute inset-0 bg-signal-success/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              <div className="relative z-10">
+                <div className="flex items-start justify-between mb-4">
+                  <p className="text-label uppercase tracking-wider text-tertiary">This Month</p>
+                  <TrendingUp className="text-signal-success" size={20} strokeWidth={1.5} />
                 </div>
+                <p className="text-data-xl text-neutral-900 dark:text-neutral-100 mb-2">
+                  {monthlyStats.distance}
+                </p>
+                <p className="text-label-sm text-tertiary uppercase tracking-wide">
+                  {distanceUnit} • {monthlyStats.runs} {monthlyStats.runs === 1 ? 'run' : 'runs'}
+                </p>
               </div>
-              <p className="text-stat-lg text-green-600 dark:text-green-400 mb-1">
-                {monthlyStats.distance}
-              </p>
-              <p className="text-body-sm text-secondary">
-                {distanceUnit} • {monthlyStats.runs} {monthlyStats.runs === 1 ? 'run' : 'runs'}
-              </p>
             </div>
 
             {/* Total Distance (30d) */}
-            <div className="card-stat group">
-              <div className="flex items-start justify-between mb-3">
-                <p className="text-sm font-medium text-secondary">Total Distance (30d)</p>
-                <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                  <MapPin className="text-blue-600 dark:text-blue-400" size={20} />
+            <div className="card-stat group relative overflow-hidden hover:shadow-md transition-all duration-300 cursor-pointer border-l-2 border-signal-info/30">
+              <div className="absolute inset-0 bg-signal-info/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              <div className="relative z-10">
+                <div className="flex items-start justify-between mb-4">
+                  <p className="text-label uppercase tracking-wider text-tertiary">Total Distance (30d)</p>
+                  <MapPin className="text-signal-info" size={20} strokeWidth={1.5} />
                 </div>
+                <p className="text-data-xl text-neutral-900 dark:text-neutral-100 mb-2">
+                  {statsData ? convertDistance(parseFloat(statsData.total_distance)) : '0'}
+                </p>
+                <p className="text-label-sm text-tertiary uppercase tracking-wide">{distanceUnit}</p>
               </div>
-              <p className="text-stat-lg text-brand-orange dark:text-brand-orange mb-1">
-                {statsData ? convertDistance(parseFloat(statsData.total_distance)) : '0'}
-              </p>
-              <p className="text-body-sm text-secondary">{distanceUnit}</p>
             </div>
 
             {/* Total Runs (30d) */}
-            <div className="card-stat group">
-              <div className="flex items-start justify-between mb-3">
-                <p className="text-sm font-medium text-secondary">Total Runs (30d)</p>
-                <div className="w-10 h-10 rounded-lg bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center">
-                  <ActivityIcon className="text-brand-orange dark:text-brand-orange" size={20} />
+            <div className="card-stat group relative overflow-hidden hover:shadow-md transition-all duration-300 cursor-pointer border-l-2 border-brand-orange/30">
+              <div className="absolute inset-0 bg-brand-orange/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              <div className="relative z-10">
+                <div className="flex items-start justify-between mb-4">
+                  <p className="text-label uppercase tracking-wider text-tertiary">Total Runs (30d)</p>
+                  <ActivityIcon className="text-brand-orange" size={20} strokeWidth={1.5} />
                 </div>
+                <p className="text-data-xl text-neutral-900 dark:text-neutral-100 mb-2">
+                  {statsData?.total_runs || 0}
+                </p>
+                <p className="text-label-sm text-tertiary uppercase tracking-wide">activities</p>
               </div>
-              <p className="text-stat-lg text-brand-orange dark:text-brand-orange mb-1">
-                {statsData?.total_runs || 0}
-              </p>
-              <p className="text-body-sm text-secondary">activities</p>
             </div>
 
             {/* Avg Pace (30d) */}
-            <div className="card-stat group">
-              <div className="flex items-start justify-between mb-3">
-                <p className="text-sm font-medium text-secondary">Avg Pace (30d)</p>
-                <div className="w-10 h-10 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
-                  <Zap className="text-purple-600 dark:text-purple-400" size={20} />
+            <div className="card-stat group relative overflow-hidden hover:shadow-md transition-all duration-300 cursor-pointer border-l-2 border-signal-caution/30">
+              <div className="absolute inset-0 bg-signal-caution/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              <div className="relative z-10">
+                <div className="flex items-start justify-between mb-4">
+                  <p className="text-label uppercase tracking-wider text-tertiary">Avg Pace (30d)</p>
+                  <Zap className="text-signal-caution" size={20} strokeWidth={1.5} />
                 </div>
+                <p className="text-data-lg text-neutral-900 dark:text-neutral-100 mb-2">
+                  {statsData?.avg_speed ? formatPace(parseFloat(statsData.avg_speed)) : 'N/A'}
+                </p>
+                <p className="text-label-sm text-tertiary uppercase tracking-wide">per {distanceUnit}</p>
               </div>
-              <p className="text-stat text-purple-600 dark:text-purple-400 mb-1">
-                {statsData?.avg_speed ? formatPace(parseFloat(statsData.avg_speed)) : 'N/A'}
-              </p>
-              <p className="text-body-sm text-secondary">per {distanceUnit}</p>
             </div>
           </div>
         </CollapsibleCard>
@@ -459,6 +380,56 @@ export default function DashboardPage() {
         </CollapsibleCard>
       )}
 
+      {/* Race Goal - Compact Card (TERTIARY - lower in hierarchy) */}
+      {visibility.marathonGoal && activeGoal && countdown && (
+        <div className="card border-l-4 border-strava">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-strava to-orange-600 flex items-center justify-center">
+                <Target className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="font-bold text-neutral-900 dark:text-neutral-100">
+                  {formatGoalTime(activeGoal.target_time_seconds)}
+                </p>
+                <p className="text-sm text-secondary">
+                  {activeGoal.race_name || 'Marathon'} • {format(new Date(activeGoal.target_date!), 'MMM dd, yyyy')}
+                </p>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-2xl font-bold text-strava">{countdown.totalDays}</p>
+              <p className="text-xs text-secondary uppercase tracking-wide">days to go</p>
+            </div>
+          </div>
+
+          {/* Training Block Progress (compact) */}
+          {profileData?.training_block_start && profileData?.training_block_end && (() => {
+            const start = new Date(profileData.training_block_start).getTime();
+            const end = new Date(profileData.training_block_end).getTime();
+            const now = Date.now();
+            const total = end - start;
+            const elapsed = now - start;
+            const percentage = Math.min(Math.max((elapsed / total) * 100, 0), 100);
+
+            return (
+              <div className="mt-3 pt-3 border-t border-neutral-200 dark:border-neutral-700">
+                <div className="flex items-center justify-between text-xs text-secondary mb-1">
+                  <span>Training Block</span>
+                  <span>{percentage.toFixed(0)}% complete</span>
+                </div>
+                <div className="bg-neutral-200 dark:bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-strava h-1.5 rounded-full transition-all duration-500"
+                    style={{ width: `${percentage}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
       {/* Recent Activities */}
       {visibility.recentActivities && (
         <CollapsibleCard id="recent-activities" title="Recent Activities">
@@ -478,35 +449,41 @@ export default function DashboardPage() {
               <button
                 key={activity.id}
                 onClick={() => navigate(`/activity/${activity.id}`)}
-                className="w-full card-stat group p-4 text-left"
+                className="w-full card-stat group p-4 text-left relative overflow-hidden border-l-2 border-brand-orange/30 hover:border-brand-orange transition-all duration-300 hover:shadow-md"
               >
-                <div className="flex items-center justify-between">
+                <div className="absolute inset-0 bg-brand-orange/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                <div className="relative z-10 flex items-center justify-between">
                   <div className="flex-1">
-                    <h3 className="text-heading-xs mb-2 text-neutral-900 dark:text-neutral-100">
-                      {activity.name || 'Run'}
-                    </h3>
-                    <div className="flex gap-3 text-body-sm text-secondary">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-8 h-8 rounded border border-brand-orange/30 flex items-center justify-center text-xl">
+                        🏃
+                      </div>
+                      <h3 className="text-heading-xs text-neutral-900 dark:text-neutral-100 font-semibold">
+                        {activity.name || 'Run'}
+                      </h3>
+                    </div>
+                    <div className="flex gap-3 text-label text-tertiary">
                       <span className="flex items-center gap-1.5">
-                        <Calendar size={14} />
+                        <Calendar size={14} strokeWidth={1.5} />
                         {format(new Date(activity.start_date), 'MMM dd, yyyy')}
                       </span>
                       <span className="flex items-center gap-1.5">
-                        <Clock size={14} />
+                        <Clock size={14} strokeWidth={1.5} />
                         {formatDuration(activity.moving_time_seconds)}
                       </span>
                     </div>
                   </div>
-                  <div className="text-right ml-6">
-                    <p className="text-stat text-brand-orange dark:text-brand-orange">
+                  <div className="text-right ml-6 bg-neutral-50 dark:bg-neutral-800/50 px-4 py-2 rounded-lg group-hover:shadow-md transition-shadow border border-neutral-200 dark:border-neutral-700">
+                    <p className="text-data-lg text-neutral-900 dark:text-neutral-100">
                       {activity.distance_meters ? convertDistance(activity.distance_meters, 2) : '0'}
                     </p>
-                    <p className="text-body-sm text-secondary">
+                    <p className="text-label-sm text-tertiary uppercase tracking-wide">
                       {distanceUnit} • {formatPace(activity.average_speed)}
                     </p>
                   </div>
                   <ChevronRight
                     size={20}
-                    className="ml-4 text-neutral-400 group-hover:text-brand-orange transition-colors"
+                    className="ml-4 text-neutral-400 group-hover:text-brand-orange group-hover:translate-x-1 transition-all"
                   />
                 </div>
               </button>
@@ -521,6 +498,16 @@ export default function DashboardPage() {
           </div>
         )}
         </CollapsibleCard>
+      )}
+
+      {/* Mobile FAB for Sync */}
+      {isMobile && (
+        <FloatingActionButton
+          icon={<RefreshCw size={24} />}
+          onClick={handleSync}
+          position="bottom-right"
+          label="Sync Strava"
+        />
       )}
     </div>
   );

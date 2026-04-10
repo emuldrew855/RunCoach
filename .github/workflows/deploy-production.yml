@@ -1,14 +1,16 @@
-name: Deploy to Azure Production
+name: Deploy to Azure Production (West Europe)
 
 on:
   push:
     branches:
       - main
+      - master
   workflow_dispatch:
 
 env:
   NODE_VERSION: '18'
-  AZURE_RESOURCE_GROUP: runcoach-prod
+  AZURE_RESOURCE_GROUP: runcoach-rg
+  AZURE_REGION: westeurope
 
 jobs:
   # Backend deployment
@@ -18,10 +20,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -44,19 +46,67 @@ jobs:
         run: |
           mkdir -p deploy
           cp -r dist node_modules package.json package-lock.json deploy/
+          if [ -d migrations ]; then cp -r migrations deploy/; fi
           cd deploy
           zip -r ../backend-deploy.zip .
 
       - name: Azure Login
-        uses: azure/login@v1
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Deploy to Azure App Service
-        uses: azure/webapps-deploy@v2
+        uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ secrets.AZURE_BACKEND_APP_NAME }}
           package: ./backend/backend-deploy.zip
+
+      - name: Azure logout
+        run: az logout
+        if: always()
+
+  # Agent Service deployment
+  deploy-agent:
+    name: Deploy Agent Service to Azure App Service
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: agent-service/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./agent-service
+        run: npm ci
+
+      - name: Build agent service
+        working-directory: ./agent-service
+        run: npm run build
+
+      - name: Create deployment package
+        working-directory: ./agent-service
+        run: |
+          mkdir -p deploy
+          cp -r dist node_modules package.json package-lock.json deploy/
+          cd deploy
+          zip -r ../agent-deploy.zip .
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_AGENT_APP_NAME }}
+          package: ./agent-service/agent-deploy.zip
 
       - name: Azure logout
         run: az logout
@@ -66,13 +116,14 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend to Azure Static Web Apps
     runs-on: ubuntu-latest
+    needs: [deploy-backend]
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -86,6 +137,7 @@ jobs:
         working-directory: ./frontend
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_STRAVA_CLIENT_ID: ${{ secrets.VITE_STRAVA_CLIENT_ID }}
         run: npm run build
 
       - name: Deploy to Azure Static Web Apps
@@ -102,19 +154,29 @@ jobs:
   health-check:
     name: Health Check
     runs-on: ubuntu-latest
-    needs: [deploy-backend, deploy-frontend]
+    needs: [deploy-backend, deploy-frontend, deploy-agent]
 
     steps:
       - name: Wait for deployment to stabilize
-        run: sleep 30
+        run: sleep 60
 
       - name: Check backend health
         run: |
           response=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.BACKEND_URL }}/health)
           if [ $response -eq 200 ]; then
-            echo "✓ Backend health check passed"
+            echo "Backend health check passed"
           else
-            echo "✗ Backend health check failed (HTTP $response)"
+            echo "Backend health check failed (HTTP $response)"
+            exit 1
+          fi
+
+      - name: Check agent service health
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.AGENT_URL }}/health)
+          if [ $response -eq 200 ]; then
+            echo "Agent service health check passed"
+          else
+            echo "Agent service health check failed (HTTP $response)"
             exit 1
           fi
 
@@ -122,15 +184,16 @@ jobs:
         run: |
           response=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.FRONTEND_URL }})
           if [ $response -eq 200 ]; then
-            echo "✓ Frontend health check passed"
+            echo "Frontend health check passed"
           else
-            echo "✗ Frontend health check failed (HTTP $response)"
+            echo "Frontend health check failed (HTTP $response)"
             exit 1
           fi
 
       - name: Notify deployment success
         if: success()
         run: |
-          echo "🎉 Deployment successful!"
+          echo "Deployment successful to West Europe!"
           echo "Backend: ${{ secrets.BACKEND_URL }}"
+          echo "Agent: ${{ secrets.AGENT_URL }}"
           echo "Frontend: ${{ secrets.FRONTEND_URL }}"

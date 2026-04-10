@@ -127,12 +127,12 @@ export default function NotificationBell() {
       {/* Bell Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative p-2 text-gray-600 dark:text-gray-300 hover:text-strava dark:hover:text-strava transition-colors rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
+        className="relative p-2 text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 transition-colors rounded"
         aria-label="Notifications"
       >
-        <Bell size={20} />
+        <Bell size={18} strokeWidth={1.5} />
         {unreadCount > 0 && (
-          <span className="absolute top-1 right-1 flex items-center justify-center w-4 h-4 text-xs font-bold text-white bg-red-500 rounded-full">
+          <span className="absolute top-0.5 right-0.5 flex items-center justify-center w-4 h-4 text-[10px] font-bold font-mono text-white bg-signal-alert rounded-full">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
@@ -140,19 +140,20 @@ export default function NotificationBell() {
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-96 bg-white dark:bg-gray-800 rounded-lg shadow-lg dark:shadow-gray-900/50 border border-gray-200 dark:border-gray-700 z-50 max-h-[32rem] flex flex-col">
+        <div className="fixed sm:absolute top-16 sm:top-auto left-2 right-2 sm:left-auto sm:right-0 sm:mt-2 w-auto sm:w-96 bg-white dark:bg-gray-800 rounded-lg shadow-lg dark:shadow-gray-900/50 border border-gray-200 dark:border-gray-700 z-50 max-h-[calc(100dvh-5rem)] sm:max-h-[32rem] flex flex-col">
           {/* Header */}
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-            <h3 className="font-semibold text-gray-900 dark:text-gray-100">
+          <div className="p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h3 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-gray-100">
               Notifications
             </h3>
             {unreadCount > 0 && (
               <button
                 onClick={handleMarkAllAsRead}
-                className="text-xs text-strava hover:text-strava-dark font-medium flex items-center gap-1"
+                className="text-xs sm:text-sm text-strava hover:text-strava-dark font-medium flex items-center gap-1"
               >
                 <Check size={14} />
-                Mark all read
+                <span className="hidden sm:inline">Mark all read</span>
+                <span className="sm:hidden">Clear</span>
               </button>
             )}
           </div>
@@ -160,9 +161,9 @@ export default function NotificationBell() {
           {/* Notifications List */}
           <div className="overflow-y-auto flex-1">
             {notifications.length === 0 ? (
-              <div className="p-8 text-center text-gray-500 dark:text-gray-400">
-                <Bell size={48} className="mx-auto mb-3 opacity-30" />
-                <p>No new notifications</p>
+              <div className="p-6 sm:p-8 text-center text-gray-500 dark:text-gray-400">
+                <Bell size={40} className="sm:w-12 sm:h-12 mx-auto mb-3 opacity-30" />
+                <p className="text-sm sm:text-base">No new notifications</p>
               </div>
             ) : (
               <div className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -170,17 +171,17 @@ export default function NotificationBell() {
                   <button
                     key={notification.id}
                     onClick={() => handleNotificationClick(notification)}
-                    className="w-full p-4 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+                    className="w-full p-3 sm:p-4 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors active:bg-gray-100 dark:active:bg-gray-700"
                   >
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-start gap-2 sm:gap-3">
                       {/* Unread Indicator */}
                       {!notification.is_read && (
-                        <div className="w-2 h-2 bg-strava rounded-full mt-2 flex-shrink-0" />
+                        <div className="w-2 h-2 bg-strava rounded-full mt-1.5 sm:mt-2 flex-shrink-0" />
                       )}
 
                       <div className="flex-1 min-w-0">
                         {/* Title */}
-                        <p className={`text-sm ${
+                        <p className={`text-xs sm:text-sm ${
                           !notification.is_read
                             ? 'font-semibold text-gray-900 dark:text-gray-100'
                             : 'font-medium text-gray-700 dark:text-gray-300'
@@ -190,13 +191,13 @@ export default function NotificationBell() {
 
                         {/* Message */}
                         {notification.message && (
-                          <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-2">
+                          <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-2">
                             {notification.message}
                           </p>
                         )}
 
                         {/* Time */}
-                        <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+                        <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-500 mt-1">
                           {formatTimeAgo(notification.created_at)}
                         </p>
                       </div>
@@ -209,13 +210,13 @@ export default function NotificationBell() {
 
           {/* Footer */}
           {notifications.length > 0 && (
-            <div className="p-3 border-t border-gray-200 dark:border-gray-700 text-center">
+            <div className="p-2.5 sm:p-3 border-t border-gray-200 dark:border-gray-700 text-center">
               <button
                 onClick={() => {
                   navigate('/notifications');
                   setIsOpen(false);
                 }}
-                className="text-sm text-strava hover:text-strava-dark font-medium"
+                className="text-xs sm:text-sm text-strava hover:text-strava-dark font-medium"
               >
                 View all notifications
               </button>
