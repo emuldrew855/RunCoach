@@ -15,6 +15,7 @@ env:
   NODE_VERSION: '18'
   AZURE_RESOURCE_GROUP: runcoach-rg
   AZURE_REGION: westeurope
+  NODE_OPTIONS: --max-old-space-size=4096
 
 jobs:
   # Backend deployment
