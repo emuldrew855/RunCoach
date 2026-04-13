@@ -632,12 +632,14 @@ export const WorkoutCalendar: React.FC = () => {
       }
     }
 
+    // Keep the same lighter/scheduled styling for all planned workouts
+    // The tick indicator already shows completion status
     return {
       style: {
         background: `linear-gradient(135deg, ${baseColor} 0%, ${darkColor} 100%)`,
         color: 'white',
-        opacity: isCompleted ? 1 : 0.75,
-        border: isCompleted ? 'none' : '1px dashed rgba(255, 255, 255, 0.3)',
+        opacity: 0.75,
+        border: '1px dashed rgba(255, 255, 255, 0.3)',
       },
     };
   };
@@ -751,18 +753,13 @@ export const WorkoutCalendar: React.FC = () => {
   };
 
   const handleEventDrop = async ({ event, start }: any) => {
-    // Don't allow dragging completed activities
+    // Don't allow dragging completed activities (synced from Strava)
     if (event.isActivity) {
       toast.error('Cannot move completed activities from Strava');
       return;
     }
 
-    // Don't allow moving completed workouts
-    if (event.completion_status === 'completed') {
-      toast.error('Cannot move completed workouts');
-      return;
-    }
-
+    // Allow moving completed workouts - user may have done them in different order
     try {
       // Format date as YYYY-MM-DD to avoid timezone issues
       // Using local date components to ensure the date shown is the date saved
