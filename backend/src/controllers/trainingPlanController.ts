@@ -18,6 +18,46 @@ import {
 import { createPlanFromFile } from '../services/trainingPlanService';
 import { generateProactiveAlerts } from '../services/alertService';
 
+/**
+ * Convert database/internal errors to user-friendly messages
+ */
+function getUserFriendlyError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return 'An unexpected error occurred. Please try again.';
+  }
+
+  const message = error.message.toLowerCase();
+
+  // Database constraint errors
+  if (message.includes('duplicate key') || message.includes('unique constraint')) {
+    return 'This plan could not be saved due to a data conflict. Please try again or contact support if the issue persists.';
+  }
+
+  if (message.includes('foreign key') || message.includes('violates foreign key')) {
+    return 'This operation references data that no longer exists. Please refresh and try again.';
+  }
+
+  if (message.includes('connection') || message.includes('timeout')) {
+    return 'Unable to connect to the server. Please check your connection and try again.';
+  }
+
+  // File parsing errors - these are already user-friendly
+  if (message.includes('no workouts found')) {
+    return 'No workouts were found in the uploaded file. Please check the file format and try again.';
+  }
+
+  if (message.includes('no valid dates')) {
+    return 'The file contains invalid or missing dates. Please ensure all workouts have valid dates in YYYY-MM-DD format.';
+  }
+
+  if (message.includes('only csv and pdf')) {
+    return 'Only CSV and PDF files are supported. Please upload a valid training plan file.';
+  }
+
+  // Generic fallback
+  return 'Failed to process your request. Please try again or contact support if the issue persists.';
+}
+
 // Training Plan Controllers
 
 export async function getPlans(req: Request, res: Response): Promise<void> {
@@ -71,7 +111,7 @@ export async function uploadPlanFile(req: Request, res: Response): Promise<void>
     res.json(result);
   } catch (error) {
     console.error('Upload plan error:', error);
-    res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to upload training plan' });
+    res.status(500).json({ error: getUserFriendlyError(error) });
   }
 }
 
@@ -82,7 +122,7 @@ export async function createManualPlan(req: Request, res: Response): Promise<voi
     res.json({ plan });
   } catch (error) {
     console.error('Create plan error:', error);
-    res.status(500).json({ error: 'Failed to create training plan' });
+    res.status(500).json({ error: getUserFriendlyError(error) });
   }
 }
 
@@ -164,7 +204,7 @@ export async function addWorkout(req: Request, res: Response): Promise<void> {
     res.json({ workout });
   } catch (error) {
     console.error('❌ Create workout error:', error);
-    res.status(500).json({ error: 'Failed to create workout' });
+    res.status(500).json({ error: getUserFriendlyError(error) });
   }
 }
 

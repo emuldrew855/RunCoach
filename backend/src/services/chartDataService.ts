@@ -352,7 +352,22 @@ export async function getHRZoneDistribution(
   );
 
   if (!result.rows[0]) {
-    throw new Error('No HR zone data found for this activity');
+    // Get activity date for metadata even when no HR zone data
+    const activityDateResult = await query(
+      'SELECT start_date_local, start_date FROM activities WHERE id = $1',
+      [activityId]
+    );
+    // Return empty data structure when no HR zone data exists
+    return {
+      zones: [],
+      metadata: {
+        activityId,
+        date: activityDateResult.rows[0]?.start_date_local ||
+              activityDateResult.rows[0]?.start_date ||
+              new Date(),
+        totalDuration: 0,
+      },
+    };
   }
 
   const hrData = result.rows[0];

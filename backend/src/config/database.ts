@@ -2,18 +2,21 @@ import { Pool, PoolClient, QueryResult } from 'pg';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// Create connection pool
+// Create connection pool with Azure-compatible settings
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 20, // Maximum number of clients in the pool
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 10000, // Increased from 2s for Azure latency
+  // Keep connections alive - prevents Azure from closing idle connections
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000, // Start keepalive after 10 seconds
 });
 
-// Log pool errors
+// Log pool errors - don't crash the process, let it recover
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-  process.exit(-1);
+  console.error('Database pool error (will attempt recovery):', err.message);
+  // Don't exit - let the pool recover by acquiring new connections
 });
 
 // Query helper function

@@ -7,6 +7,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
+import axios from 'axios';
 import routes from './routes';
 import { errorHandler } from './middleware/errorHandler';
 import { telemetryMiddleware, sessionTrackingMiddleware } from './middleware/telemetry';
@@ -15,6 +16,10 @@ import { startWeeklyAnalysisJob } from './agent/jobs/weekly-analysis.job';
 import { startRunnerTendencyJob } from './jobs/runner-tendency.job';
 import { startCoachingResponseJob } from './jobs/coaching-response.job';
 import logger from './utils/logger';
+
+// Agent service configuration
+const AGENT_SERVICE_URL = process.env.AGENT_SERVICE_URL || 'http://localhost:3002';
+const SERVICE_SECRET = process.env.SERVICE_SECRET || '';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -94,6 +99,48 @@ app.use('/api/v1', routes);
 // Error handler (must be last)
 app.use(errorHandler);
 
+/**
+ * Check connectivity to agent service
+ */
+async function checkAgentServiceConnectivity(): Promise<boolean> {
+  logger.info('AGENT_SERVICE_CHECK', { url: AGENT_SERVICE_URL });
+
+  try {
+    const response = await axios.get(`${AGENT_SERVICE_URL}/health`, {
+      timeout: 10000,
+      headers: {
+        'X-Service-Token': SERVICE_SECRET,
+      },
+    });
+
+    if (response.status === 200) {
+      logger.info('AGENT_SERVICE_CONNECTED', { status: response.data?.status });
+      return true;
+    } else {
+      logger.warn('AGENT_SERVICE_UNEXPECTED_STATUS', { status: response.status });
+      return false;
+    }
+  } catch (error: any) {
+    if (error.code === 'ECONNREFUSED') {
+      logger.warn('AGENT_SERVICE_NOT_RUNNING', {
+        url: AGENT_SERVICE_URL,
+        message: 'Agent service not reachable - chat features will be unavailable',
+      });
+    } else if (error.code === 'ENOTFOUND') {
+      logger.warn('AGENT_SERVICE_HOST_NOT_FOUND', {
+        url: AGENT_SERVICE_URL,
+        message: 'Check AGENT_SERVICE_URL environment variable',
+      });
+    } else {
+      logger.warn('AGENT_SERVICE_ERROR', {
+        url: AGENT_SERVICE_URL,
+        error: error.message,
+      });
+    }
+    return false;
+  }
+}
+
 // Start server
 async function startServer() {
   try {
@@ -111,6 +158,14 @@ async function startServer() {
     await runMigrations();
     logger.info('DATABASE_MIGRATIONS_COMPLETE');
 
+    // Check agent service connectivity (non-blocking - chat still works, just warns)
+    const agentConnected = await checkAgentServiceConnectivity();
+    if (!agentConnected) {
+      logger.warn('AGENT_SERVICE_UNAVAILABLE', {
+        message: 'Backend will retry on chat requests',
+      });
+    }
+
     // Start listening
     app.listen(PORT, () => {
       logger.info('SERVER_STARTUP', {
@@ -122,6 +177,8 @@ async function startServer() {
         databaseUrl: process.env.DATABASE_URL ? '[SET]' : '[MISSING]',
         openaiApiKey: process.env.OPENAI_API_KEY ? '[SET]' : '[MISSING]',
         jwtSecret: process.env.JWT_SECRET ? '[SET]' : '[MISSING]',
+        agentServiceUrl: AGENT_SERVICE_URL,
+        agentServiceConnected: agentConnected,
       });
 
       // Start scheduled jobs

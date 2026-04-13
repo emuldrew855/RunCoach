@@ -54,6 +54,8 @@ jobs:
           cp -r dist package.json package-lock.json deploy/
           if [ -d migrations ]; then cp -r migrations deploy/; fi
           cd deploy
+          # Install production dependencies in the deploy folder
+          npm ci --only=production
           zip -r ../backend-deploy.zip .
 
       - name: Azure Login
@@ -104,6 +106,8 @@ jobs:
           mkdir -p deploy
           cp -r dist package.json package-lock.json deploy/
           cd deploy
+          # Install production dependencies in the deploy folder
+          npm ci --only=production
           zip -r ../agent-deploy.zip .
 
       - name: Azure Login
@@ -174,7 +178,7 @@ jobs:
         run: az logout || true
         if: always()
 
-  # Post-deployment health check
+  # Post-deployment health check with retries
   health-check:
     name: Health Check
     runs-on: ubuntu-latest
@@ -183,37 +187,76 @@ jobs:
 
     steps:
       - name: Wait for deployment to stabilize
-        run: sleep 60
+        run: sleep 30
 
-      - name: Check backend health
+      - name: Check backend health (retry)
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.BACKEND_URL }}/health)
-          if [ $response -eq 200 ]; then
-            echo "Backend health check passed"
-          else
-            echo "Backend health check failed (HTTP $response)"
-            exit 1
-          fi
+          set -e
+          url="${{ secrets.BACKEND_URL }}/health"
+          echo "Checking: $url"
 
-      - name: Check agent service health
-        run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.AGENT_URL }}/health)
-          if [ $response -eq 200 ]; then
-            echo "Agent service health check passed"
-          else
-            echo "Agent service health check failed (HTTP $response)"
-            exit 1
-          fi
+          # Try for up to 3 minutes (18 * 10s)
+          for i in $(seq 1 18); do
+            code=$(curl -s -o /tmp/backend_health_body.txt -w "%{http_code}" "$url" || true)
+            if [ "$code" = "200" ]; then
+              echo "Backend health check passed"
+              cat /tmp/backend_health_body.txt || true
+              exit 0
+            fi
 
-      - name: Check frontend
+            echo "Attempt $i: Backend health returned HTTP $code"
+            echo "Response body (if any):"
+            tail -c 2000 /tmp/backend_health_body.txt || true
+            sleep 10
+          done
+
+          echo "Backend health check failed after retries"
+          exit 1
+
+      - name: Check agent service health (retry)
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.FRONTEND_URL }})
-          if [ $response -eq 200 ]; then
-            echo "Frontend health check passed"
-          else
-            echo "Frontend health check failed (HTTP $response)"
-            exit 1
-          fi
+          set -e
+          url="${{ secrets.AGENT_URL }}/health"
+          echo "Checking: $url"
+
+          # Try for up to 5 minutes (30 * 10s) - agent takes longer to warm up
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /tmp/agent_health_body.txt -w "%{http_code}" "$url" || true)
+            if [ "$code" = "200" ]; then
+              echo "Agent service health check passed"
+              cat /tmp/agent_health_body.txt || true
+              exit 0
+            fi
+
+            echo "Attempt $i: Agent health returned HTTP $code"
+            echo "Response body (if any):"
+            tail -c 2000 /tmp/agent_health_body.txt || true
+            sleep 10
+          done
+
+          echo "Agent service health check failed after retries"
+          exit 1
+
+      - name: Check frontend (retry)
+        run: |
+          set -e
+          url="${{ secrets.FRONTEND_URL }}"
+          echo "Checking: $url"
+
+          # Try for up to 2 minutes (12 * 10s)
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /tmp/frontend_body.txt -w "%{http_code}" "$url" || true)
+            if [ "$code" = "200" ]; then
+              echo "Frontend health check passed"
+              exit 0
+            fi
+
+            echo "Attempt $i: Frontend returned HTTP $code"
+            sleep 10
+          done
+
+          echo "Frontend health check failed after retries"
+          exit 1
 
       - name: Notify deployment success
         if: success()
