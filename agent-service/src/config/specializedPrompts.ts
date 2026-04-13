@@ -480,7 +480,7 @@ ${metrics?.paceTargets ? `
 **WEEKLY LOAD:**
 - Planned: ${metrics?.weeklyLoad.plannedDistanceKm || 0} km
 - Recent 4-Week Avg: ${metrics?.weeklyLoad.typicalWeeklyKm || 0} km
-- Volume Change: ${metrics?.weeklyLoad.volumeChangePercent > 0 ? '+' : ''}${metrics?.weeklyLoad.volumeChangePercent || 0}%
+- Volume Change: ${(metrics?.weeklyLoad?.volumeChangePercent ?? 0) > 0 ? '+' : ''}${metrics?.weeklyLoad?.volumeChangePercent || 0}%
 
 **STRESS DISTRIBUTION (Quality km breakdown):**
 - Tempo/Threshold km: ${metrics?.stressDistribution?.tempoKm || 0}
@@ -774,7 +774,7 @@ ${metrics?.paceTargets ? `
 **WEEKLY LOAD:**
 - Planned: ${metrics?.weeklyLoad.plannedDistanceKm || 0} km
 - Recent 4-Week Avg: ${metrics?.weeklyLoad.typicalWeeklyKm || 0} km
-- Volume Change: ${metrics?.weeklyLoad.volumeChangePercent > 0 ? '+' : ''}${metrics?.weeklyLoad.volumeChangePercent || 0}%
+- Volume Change: ${(metrics?.weeklyLoad?.volumeChangePercent ?? 0) > 0 ? '+' : ''}${metrics?.weeklyLoad?.volumeChangePercent || 0}%
 - Completed: ${metrics?.weeklyLoad.completedDistanceKm || 0} km
 - Remaining: ${metrics?.weeklyLoad.remainingDistanceKm || 0} km
 
@@ -1032,7 +1032,7 @@ export function buildHistoricalProgressPrompt(userData: UserContextData): string
   const longRunProgression = (userData as any).longRunProgression;
 
   // Fallback to old format if new data not available
-  const history = userData.historicalProgress;
+  const history = (userData as any).historicalProgress;
 
   // Goal context
   const goalType = userData.activeGoal?.goal_type?.replace('_', ' ') || 'race';
@@ -1293,7 +1293,7 @@ ${metrics?.goal?.daysUntilRace ? `- Days Until Race: ${metrics.goal.daysUntilRac
 **WEEKLY LOAD:**
 - Planned: ${metrics?.weeklyLoad.plannedDistanceKm || 0} km
 - Recent 4-Week Avg: ${metrics?.weeklyLoad.typicalWeeklyKm || 0} km
-- Volume Change: ${metrics?.weeklyLoad.volumeChangePercent > 0 ? '+' : ''}${metrics?.weeklyLoad.volumeChangePercent || 0}%
+- Volume Change: ${(metrics?.weeklyLoad?.volumeChangePercent ?? 0) > 0 ? '+' : ''}${metrics?.weeklyLoad?.volumeChangePercent || 0}%
 - Completed: ${metrics?.weeklyLoad.completedDistanceKm || 0} km
 - Remaining: ${metrics?.weeklyLoad.remainingDistanceKm || 0} km
 

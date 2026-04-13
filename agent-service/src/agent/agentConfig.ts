@@ -12,7 +12,7 @@
 
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { Intent } from '../utils/intentClassifier';
-import { UserContextData } from '../../../backend/src/types/models';
+import { UserContextData } from '../types';
 import {
   buildRunAnalysisPrompt,
   buildPlanReviewPrompt,

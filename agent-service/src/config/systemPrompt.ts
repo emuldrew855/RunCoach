@@ -683,7 +683,7 @@ ${userData.thisWeekCompleted.adherence ? `
 **Detailed Activity Breakdown:**
 ${userData.thisWeekCompleted.activities
   .map(
-    (a) =>
+    (a: any) =>
       `- ${formatDate(a.date)}: ${a.name || 'Run'} - ${a.distance.toFixed(2)} km in ${Math.floor(a.duration / 60)} minutes${a.pace ? ` (${formatPace(a.pace)}/km pace)` : ''}${a.avgHR ? ` | Avg HR: ${a.avgHR} bpm` : ''}${a.maxHR ? ` (max ${a.maxHR})` : ''}${a.elevationGain ? ` | Elevation: ${Math.round(a.elevationGain)}m` : ''}`
   )
   .join('\n')}`
@@ -844,7 +844,7 @@ IMPORTANT: For marathon training, ~80% of volume should be in Zones 1-2. Current
 }
 
 # Recent Runs (Last 5)
-${userData.recentActivities.map((activity) => `- ${formatDate(activity.start_date)}: ${(activity.distance_meters / 1000).toFixed(2)} km in ${formatTime(activity.moving_time_seconds)}`).join('\n')}
+${(userData as any).recentActivities?.map((activity: any) => `- ${formatDate(activity.start_date)}: ${(activity.distance_meters / 1000).toFixed(2)} km in ${formatTime(activity.moving_time_seconds)}`).join('\n') || 'No recent activities available'}
 
 ${userData.dailyInsights && userData.dailyInsights.length > 0 ? `
 # 🔍 PRE-COMPUTED INSIGHTS (Use These EXACTLY)
@@ -1231,7 +1231,7 @@ When creating or modifying interval workouts, use this format:
 **Provide Context:**
 - Reference recent activities or performances from the schedule
 - Explain the training principle behind the change (e.g., "Zone 2 builds aerobic base")
-- Connect changes to their goal (e.g., "This will help you hit your ${userData.goal?.target_time} marathon target")
+- Connect changes to their goal (e.g., "This will help you hit your ${userData.activeGoal?.target_time_seconds ? Math.floor(userData.activeGoal.target_time_seconds / 3600) + ':' + Math.floor((userData.activeGoal.target_time_seconds % 3600) / 60).toString().padStart(2, '0') : 'target'} marathon target")
 
 **Be Specific:**
 - Use exact workout IDs from the training calendar context

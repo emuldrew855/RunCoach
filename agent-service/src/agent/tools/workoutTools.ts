@@ -19,7 +19,14 @@ import { z } from 'zod';
  * Shift Workout Tool
  * Suggests moving a workout to a different date
  */
-export const shiftWorkoutTool = tool(
+// Define schemas separately to avoid type instantiation issues
+const shiftWorkoutSchema = z.object({
+  workoutId: z.number().describe('The ID of the workout to shift'),
+  newDate: z.string().describe('The new date in YYYY-MM-DD format'),
+  reason: z.string().optional().describe('Explanation of why this shift is recommended'),
+});
+
+export const shiftWorkoutTool = (tool as any)(
   async ({ workoutId, newDate, reason }: { workoutId: number; newDate: string; reason?: string }) => {
     try {
       // Create pending action instead of executing directly
@@ -49,19 +56,37 @@ export const shiftWorkoutTool = tool(
     name: 'shift_workout',
     description:
       'Suggest shifting a workout to a different date. IMPORTANT: This SUGGESTS changes - user must approve before execution. Use the workout ID from the schedule.',
-    schema: z.object({
-      workoutId: z.number().describe('The ID of the workout to shift'),
-      newDate: z.string().describe('The new date in YYYY-MM-DD format'),
-      reason: z.string().optional().describe('Explanation of why this shift is recommended'),
-    }),
-  }
+    schema: shiftWorkoutSchema,
+  } as any
 );
 
 /**
  * Modify Workout Tool
  * Suggests modifications to an existing workout's parameters
  */
-export const modifyWorkoutTool = tool(
+const modifyWorkoutSchema = z.object({
+  workoutId: z.number().describe('The ID of the workout to modify'),
+  updates: z
+    .object({
+      target_distance_meters: z.number().nullable().optional().describe('Distance in meters'),
+      target_duration_seconds: z.number().nullable().optional().describe('Duration in seconds'),
+      target_pace_min: z.number().nullable().optional().describe('Fastest pace in min/km (e.g., 4.5 = 4:30/km)'),
+      target_pace_max: z.number().nullable().optional().describe('Slowest pace in min/km'),
+      target_pace_avg: z.number().nullable().optional().describe('Target average pace in min/km'),
+      target_hr_zone: z.number().min(1).max(5).nullable().optional().describe('Heart rate zone (1-5)'),
+      target_hr_min: z.number().nullable().optional().describe('Minimum heart rate (bpm)'),
+      target_hr_max: z.number().nullable().optional().describe('Maximum heart rate (bpm)'),
+      workout_type: z.string().nullable().optional().describe('Workout type (easy, long_run, tempo, intervals, etc.)'),
+      name: z.string().nullable().optional().describe('Workout name'),
+      description: z.string().nullable().optional().describe('Workout description'),
+      coach_notes: z.string().nullable().optional().describe('Coach instructions for the athlete'),
+      intervals: z.any().nullable().optional().describe('Structured interval workout definition (JSONB)'),
+    })
+    .describe('The fields to update'),
+  reason: z.string().optional().describe('Explanation of why this modification is recommended'),
+});
+
+export const modifyWorkoutTool = (tool as any)(
   async ({
     workoutId,
     updates,
@@ -113,35 +138,32 @@ export const modifyWorkoutTool = tool(
     name: 'modify_workout',
     description:
       'Suggest modifications to a planned workout. IMPORTANT: This SUGGESTS changes - user must approve before execution. Can modify distance, duration, pace (min/max/avg), HR zones, workout type, notes, and structured intervals.',
-    schema: z.object({
-      workoutId: z.number().describe('The ID of the workout to modify'),
-      updates: z
-        .object({
-          target_distance_meters: z.number().nullable().optional().describe('Distance in meters'),
-          target_duration_seconds: z.number().nullable().optional().describe('Duration in seconds'),
-          target_pace_min: z.number().nullable().optional().describe('Fastest pace in min/km (e.g., 4.5 = 4:30/km)'),
-          target_pace_max: z.number().nullable().optional().describe('Slowest pace in min/km'),
-          target_pace_avg: z.number().nullable().optional().describe('Target average pace in min/km'),
-          target_hr_zone: z.number().min(1).max(5).nullable().optional().describe('Heart rate zone (1-5)'),
-          target_hr_min: z.number().nullable().optional().describe('Minimum heart rate (bpm)'),
-          target_hr_max: z.number().nullable().optional().describe('Maximum heart rate (bpm)'),
-          workout_type: z.string().nullable().optional().describe('Workout type (easy, long_run, tempo, intervals, etc.)'),
-          name: z.string().nullable().optional().describe('Workout name'),
-          description: z.string().nullable().optional().describe('Workout description'),
-          coach_notes: z.string().nullable().optional().describe('Coach instructions for the athlete'),
-          intervals: z.any().nullable().optional().describe('Structured interval workout definition (JSONB)'),
-        })
-        .describe('The fields to update'),
-      reason: z.string().optional().describe('Explanation of why this modification is recommended'),
-    }),
-  }
+    schema: modifyWorkoutSchema,
+  } as any
 );
 
 /**
  * Create Workout Tool
  * Suggests creating a new workout in the training plan
  */
-export const createWorkoutTool = tool(
+const createWorkoutSchema = z.object({
+  scheduledDate: z.string().describe('Date in YYYY-MM-DD format'),
+  workoutType: z.string().describe('Type: easy, long_run, tempo, intervals, recovery, race, rest'),
+  name: z.string().nullable().optional().describe('Workout name'),
+  targetDistanceMeters: z.number().nullable().optional().describe('Distance in meters'),
+  targetDurationSeconds: z.number().nullable().optional().describe('Duration in seconds'),
+  targetPaceMin: z.number().nullable().optional().describe('Fastest pace in min/km'),
+  targetPaceMax: z.number().nullable().optional().describe('Slowest pace in min/km'),
+  targetPaceAvg: z.number().nullable().optional().describe('Target average pace in min/km'),
+  targetHrZone: z.number().min(1).max(5).nullable().optional().describe('Heart rate zone (1-5)'),
+  targetHrMin: z.number().nullable().optional().describe('Minimum heart rate (bpm)'),
+  targetHrMax: z.number().nullable().optional().describe('Maximum heart rate (bpm)'),
+  coachNotes: z.string().nullable().optional().describe('Coach instructions'),
+  intervals: z.any().nullable().optional().describe('Structured interval workout: {warmup, mainSet, cooldown}'),
+  reason: z.string().optional().describe('Explanation of why this workout is recommended'),
+});
+
+export const createWorkoutTool = (tool as any)(
   async ({
     scheduledDate,
     workoutType,
@@ -212,30 +234,20 @@ export const createWorkoutTool = tool(
     name: 'create_workout',
     description:
       'Suggest creating a new workout in the training plan. IMPORTANT: This SUGGESTS changes - user must approve before execution. Supports full interval workouts with structured format.',
-    schema: z.object({
-      scheduledDate: z.string().describe('Date in YYYY-MM-DD format'),
-      workoutType: z.string().describe('Type: easy, long_run, tempo, intervals, recovery, race, rest'),
-      name: z.string().nullable().optional().describe('Workout name'),
-      targetDistanceMeters: z.number().nullable().optional().describe('Distance in meters'),
-      targetDurationSeconds: z.number().nullable().optional().describe('Duration in seconds'),
-      targetPaceMin: z.number().nullable().optional().describe('Fastest pace in min/km'),
-      targetPaceMax: z.number().nullable().optional().describe('Slowest pace in min/km'),
-      targetPaceAvg: z.number().nullable().optional().describe('Target average pace in min/km'),
-      targetHrZone: z.number().min(1).max(5).nullable().optional().describe('Heart rate zone (1-5)'),
-      targetHrMin: z.number().nullable().optional().describe('Minimum heart rate (bpm)'),
-      targetHrMax: z.number().nullable().optional().describe('Maximum heart rate (bpm)'),
-      coachNotes: z.string().nullable().optional().describe('Coach instructions'),
-      intervals: z.any().nullable().optional().describe('Structured interval workout: {warmup, mainSet, cooldown}'),
-      reason: z.string().optional().describe('Explanation of why this workout is recommended'),
-    }),
-  }
+    schema: createWorkoutSchema,
+  } as any
 );
 
 /**
  * Delete Workout Tool
  * Suggests deleting a workout from the training plan
  */
-export const deleteWorkoutTool = tool(
+const deleteWorkoutSchema = z.object({
+  workoutId: z.number().describe('The ID of the workout to delete'),
+  reason: z.string().optional().describe('Explanation of why this workout should be deleted'),
+});
+
+export const deleteWorkoutTool = (tool as any)(
   async ({ workoutId, reason }: { workoutId: number; reason?: string }) => {
     try {
       // Create pending action instead of executing directly
@@ -263,18 +275,47 @@ export const deleteWorkoutTool = tool(
   {
     name: 'delete_workout',
     description: 'Suggest deleting a workout from the training plan. IMPORTANT: This SUGGESTS changes - user must approve before execution.',
-    schema: z.object({
-      workoutId: z.number().describe('The ID of the workout to delete'),
-      reason: z.string().optional().describe('Explanation of why this workout should be deleted'),
-    }),
-  }
+    schema: deleteWorkoutSchema,
+  } as any
 );
 
 /**
  * Bulk Modify Workouts Tool
  * Suggests modifying multiple workouts matching specific criteria
  */
-export const bulkModifyWorkoutsTool = tool(
+const bulkModifyWorkoutsSchema = z.object({
+  criteria: z.object({
+    workout_types: z.array(z.string()).optional().describe('Filter by workout types (easy, long_run, tempo, intervals, recovery, race, rest)'),
+    date_range: z.object({
+      start_date: z.string().describe('YYYY-MM-DD format'),
+      end_date: z.string().describe('YYYY-MM-DD format'),
+    }).optional().describe('Absolute date range'),
+    days_from_now: z.object({
+      min: z.number().optional().describe('Minimum days from today'),
+      max: z.number().optional().describe('Maximum days from today'),
+    }).optional().describe('Relative date range from today'),
+    exclude_completed: z.boolean().default(true).describe('Never modify completed workouts (always true for safety)'),
+    limit: z.number().default(50).describe('Max workouts to modify (safety limit, max 100)'),
+  }).describe('Criteria to match workouts'),
+  updates: z.object({
+    target_distance_meters: z.number().nullable().optional(),
+    target_duration_seconds: z.number().nullable().optional(),
+    target_pace_min: z.number().nullable().optional(),
+    target_pace_max: z.number().nullable().optional(),
+    target_pace_avg: z.number().nullable().optional(),
+    target_hr_zone: z.number().min(1).max(5).nullable().optional(),
+    target_hr_min: z.number().nullable().optional(),
+    target_hr_max: z.number().nullable().optional(),
+    workout_type: z.string().nullable().optional(),
+    name: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+    coach_notes: z.string().nullable().optional(),
+    intervals: z.any().nullable().optional(),
+  }).describe('Updates to apply to matched workouts'),
+  reason: z.string().describe('Explain why this bulk modification is recommended'),
+});
+
+export const bulkModifyWorkoutsTool = (tool as any)(
   async ({ criteria, updates, reason }: {
     criteria: {
       workout_types?: string[];
@@ -354,46 +395,21 @@ Examples:
 - "All my long runs need to be at Zone 2" → criteria: { workout_types: ['long_run'], exclude_completed: true }
 - "Reduce all tempo runs in next 4 weeks" → criteria: { workout_types: ['tempo'], days_from_now: { min: 0, max: 28 } }
 - "Change all easy runs to 5:30 pace" → criteria: { workout_types: ['easy'] }, updates: { target_pace_avg: 5.5 }`,
-
-    schema: z.object({
-      criteria: z.object({
-        workout_types: z.array(z.string()).optional().describe('Filter by workout types (easy, long_run, tempo, intervals, recovery, race, rest)'),
-        date_range: z.object({
-          start_date: z.string().describe('YYYY-MM-DD format'),
-          end_date: z.string().describe('YYYY-MM-DD format'),
-        }).optional().describe('Absolute date range'),
-        days_from_now: z.object({
-          min: z.number().optional().describe('Minimum days from today'),
-          max: z.number().optional().describe('Maximum days from today'),
-        }).optional().describe('Relative date range from today'),
-        exclude_completed: z.boolean().default(true).describe('Never modify completed workouts (always true for safety)'),
-        limit: z.number().default(50).describe('Max workouts to modify (safety limit, max 100)'),
-      }).describe('Criteria to match workouts'),
-      updates: z.object({
-        target_distance_meters: z.number().nullable().optional(),
-        target_duration_seconds: z.number().nullable().optional(),
-        target_pace_min: z.number().nullable().optional(),
-        target_pace_max: z.number().nullable().optional(),
-        target_pace_avg: z.number().nullable().optional(),
-        target_hr_zone: z.number().min(1).max(5).nullable().optional(),
-        target_hr_min: z.number().nullable().optional(),
-        target_hr_max: z.number().nullable().optional(),
-        workout_type: z.string().nullable().optional(),
-        name: z.string().nullable().optional(),
-        description: z.string().nullable().optional(),
-        coach_notes: z.string().nullable().optional(),
-        intervals: z.any().nullable().optional(),
-      }).describe('Updates to apply to matched workouts'),
-      reason: z.string().describe('Explain why this bulk modification is recommended'),
-    }),
-  }
+    schema: bulkModifyWorkoutsSchema,
+  } as any
 );
 
 /**
  * Swap Training Weeks Tool
  * Suggests swapping all workouts between two training weeks
  */
-export const swapTrainingWeeksTool = tool(
+const swapTrainingWeeksSchema = z.object({
+  week1StartDate: z.string().describe('First day of week 1 in YYYY-MM-DD format (Sunday or Monday depending on user preference)'),
+  week2StartDate: z.string().describe('First day of week 2 in YYYY-MM-DD format (Sunday or Monday depending on user preference)'),
+  reason: z.string().describe('Detailed explanation of why swapping these weeks is beneficial (e.g., "Swapping peak week with recovery week due to illness" or "Moving hard week to avoid travel conflict")'),
+});
+
+export const swapTrainingWeeksTool = (tool as any)(
   async ({ week1StartDate, week2StartDate, reason }: {
     week1StartDate: string;
     week2StartDate: string;
@@ -438,13 +454,8 @@ Use Cases:
 Example: "Swap week of Feb 10 with week of Feb 17" → swaps all workouts between these two weeks
 
 Note: Weeks start on Sunday or Monday based on user's week_starts_on preference. Provide the first day of each week.`,
-
-    schema: z.object({
-      week1StartDate: z.string().describe('First day of week 1 in YYYY-MM-DD format (Sunday or Monday depending on user preference)'),
-      week2StartDate: z.string().describe('First day of week 2 in YYYY-MM-DD format (Sunday or Monday depending on user preference)'),
-      reason: z.string().describe('Detailed explanation of why swapping these weeks is beneficial (e.g., "Swapping peak week with recovery week due to illness" or "Moving hard week to avoid travel conflict")'),
-    }),
-  }
+    schema: swapTrainingWeeksSchema,
+  } as any
 );
 
 /**
@@ -452,7 +463,12 @@ Note: Weeks start on Sunday or Monday based on user's week_starts_on preference.
  * Used when the plan is sound and no modifications are needed
  * This allows the model to always call a tool (either modification or approval)
  */
-export const approvePlanTool = tool(
+const approvePlanSchema = z.object({
+  verdict: z.enum(['sound', 'needs_minor_adjustment', 'well_structured']).describe('Your assessment of the plan'),
+  reasoning: z.string().describe('Detailed explanation of why the plan is sound and no changes are needed'),
+});
+
+export const approvePlanTool = (tool as any)(
   async ({ verdict, reasoning }: { verdict: 'sound' | 'needs_minor_adjustment' | 'well_structured'; reasoning: string }) => {
     try {
       return JSON.stringify({
@@ -481,17 +497,14 @@ Use this when:
 - No changes are needed
 
 Do NOT call this if you have ANY recommendations for changes - call the modification tools instead.`,
-    schema: z.object({
-      verdict: z.enum(['sound', 'needs_minor_adjustment', 'well_structured']).describe('Your assessment of the plan'),
-      reasoning: z.string().describe('Detailed explanation of why the plan is sound and no changes are needed'),
-    }),
-  }
+    schema: approvePlanSchema,
+  } as any
 );
 
 /**
  * Export all tools as an array for easy consumption
  */
-export const workoutTools = [
+export const workoutTools: any[] = [
   shiftWorkoutTool,
   modifyWorkoutTool,
   createWorkoutTool,
