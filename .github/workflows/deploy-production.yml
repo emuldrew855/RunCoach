@@ -53,6 +53,8 @@ jobs:
           mkdir -p deploy
           cp -r dist package.json package-lock.json deploy/
           if [ -d migrations ]; then cp -r migrations deploy/; fi
+          # Include .deployment to prevent Azure from running its own build
+          if [ -f .deployment ]; then cp .deployment deploy/; fi
           cd deploy
           # Install production dependencies in the deploy folder
           npm ci --omit=dev
@@ -105,6 +107,8 @@ jobs:
         run: |
           mkdir -p deploy
           cp -r dist package.json package-lock.json deploy/
+          # Include .deployment to prevent Azure from running its own build
+          if [ -f .deployment ]; then cp .deployment deploy/; fi
           cd deploy
           # Install production dependencies in the deploy folder
           npm ci --omit=dev
