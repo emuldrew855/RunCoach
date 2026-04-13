@@ -126,6 +126,91 @@ export async function calculateAndStoreHRZones(
   return result.rows[0];
 }
 
+/**
+ * Estimate and store HR zones based on average HR when stream data is not available
+ * This is a fallback method that distributes time across zones based on average HR
+ */
+export async function estimateAndStoreHRZones(
+  activityId: number,
+  userId: number,
+  averageHeartrate: number,
+  movingTimeSeconds: number
+): Promise<ActivityHRZone | null> {
+  if (!averageHeartrate || !movingTimeSeconds) {
+    return null;
+  }
+
+  // Get user's custom HR zones
+  const hrZones = await getUserHRZones(userId);
+
+  const avgHR = averageHeartrate;
+  const totalSeconds = movingTimeSeconds;
+
+  // Simple estimation: assume most time is spent near average HR
+  // Distribute time across zones based on proximity to average
+  const zoneSeconds = {
+    zone_1_seconds: 0,
+    zone_2_seconds: 0,
+    zone_3_seconds: 0,
+    zone_4_seconds: 0,
+    zone_5_seconds: 0,
+  };
+
+  // Determine primary zone based on average HR (using custom zones)
+  if (avgHR < hrZones.zone_1_max) {
+    zoneSeconds.zone_1_seconds = Math.floor(totalSeconds * 0.8);
+    zoneSeconds.zone_2_seconds = Math.floor(totalSeconds * 0.2);
+  } else if (avgHR < hrZones.zone_2_max) {
+    zoneSeconds.zone_1_seconds = Math.floor(totalSeconds * 0.2);
+    zoneSeconds.zone_2_seconds = Math.floor(totalSeconds * 0.6);
+    zoneSeconds.zone_3_seconds = Math.floor(totalSeconds * 0.2);
+  } else if (avgHR < hrZones.zone_3_max) {
+    zoneSeconds.zone_2_seconds = Math.floor(totalSeconds * 0.2);
+    zoneSeconds.zone_3_seconds = Math.floor(totalSeconds * 0.6);
+    zoneSeconds.zone_4_seconds = Math.floor(totalSeconds * 0.2);
+  } else if (avgHR < hrZones.zone_4_max) {
+    zoneSeconds.zone_3_seconds = Math.floor(totalSeconds * 0.2);
+    zoneSeconds.zone_4_seconds = Math.floor(totalSeconds * 0.6);
+    zoneSeconds.zone_5_seconds = Math.floor(totalSeconds * 0.2);
+  } else {
+    zoneSeconds.zone_4_seconds = Math.floor(totalSeconds * 0.2);
+    zoneSeconds.zone_5_seconds = Math.floor(totalSeconds * 0.8);
+  }
+
+  // Store estimated zones with user's custom zone thresholds
+  const result = await query(
+    `INSERT INTO activity_hr_zones (
+      activity_id, user_id, zone_1_seconds, zone_2_seconds, zone_3_seconds,
+      zone_4_seconds, zone_5_seconds, zone_1_max, zone_2_max, zone_3_max,
+      zone_4_max, zone_5_max
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    ON CONFLICT (activity_id) DO UPDATE SET
+      zone_1_seconds = EXCLUDED.zone_1_seconds,
+      zone_2_seconds = EXCLUDED.zone_2_seconds,
+      zone_3_seconds = EXCLUDED.zone_3_seconds,
+      zone_4_seconds = EXCLUDED.zone_4_seconds,
+      zone_5_seconds = EXCLUDED.zone_5_seconds,
+      calculated_at = NOW()
+    RETURNING *`,
+    [
+      activityId,
+      userId,
+      zoneSeconds.zone_1_seconds,
+      zoneSeconds.zone_2_seconds,
+      zoneSeconds.zone_3_seconds,
+      zoneSeconds.zone_4_seconds,
+      zoneSeconds.zone_5_seconds,
+      hrZones.zone_1_max,
+      hrZones.zone_2_max,
+      hrZones.zone_3_max,
+      hrZones.zone_4_max,
+      hrZones.zone_5_max,
+    ]
+  );
+
+  return result.rows[0] || null;
+}
+
 export async function getHRZoneSummary(userId: number, days: number = 30): Promise<{
   total_zone_1: number;
   total_zone_2: number;

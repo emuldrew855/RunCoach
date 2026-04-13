@@ -1,6 +1,6 @@
 import { getStravaActivities, getActivityStreams } from './stravaService';
 import { upsertActivity } from '../models/Activity';
-import { calculateAndStoreHRZones } from '../models/ActivityHRZone';
+import { calculateAndStoreHRZones, estimateAndStoreHRZones } from '../models/ActivityHRZone';
 import { extractActivityPatterns, generatePatternEmbeddings } from './activityPatternService';
 import { computeDailyInsight } from './dailyInsightService';
 import { getUserById, updateUser } from '../models/User';
@@ -61,10 +61,29 @@ export async function syncActivities(userId: number): Promise<number> {
               heartrates: streams.heartrate.data,
             });
             console.log(`✅ Calculated HR zones for activity ${dbActivity.id}`);
+          } else {
+            // Fallback: estimate HR zones from average HR when streams not available
+            await estimateAndStoreHRZones(
+              dbActivity.id,
+              userId,
+              activity.average_heartrate,
+              activity.moving_time
+            );
+            console.log(`✅ Estimated HR zones for activity ${dbActivity.id} (no stream data)`);
           }
         } catch (error) {
-          console.warn(`⚠️ Failed to calculate HR zones for activity ${activity.id}:`, error);
-          // Continue with sync even if HR zone calculation fails
+          // Final fallback: estimate HR zones even if stream fetch fails
+          try {
+            await estimateAndStoreHRZones(
+              dbActivity.id,
+              userId,
+              activity.average_heartrate,
+              activity.moving_time
+            );
+            console.log(`✅ Estimated HR zones for activity ${dbActivity.id} (stream fetch failed)`);
+          } catch (fallbackError) {
+            console.warn(`⚠️ Failed to calculate HR zones for activity ${activity.id}:`, error);
+          }
         }
       }
 
