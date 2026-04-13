@@ -6,6 +6,7 @@ export interface User {
   last_name?: string;
   profile_picture_url?: string;
   profile?: UserProfile;
+  onboarding_completed?: boolean;
   created_at: string;
   updated_at: string;
 }

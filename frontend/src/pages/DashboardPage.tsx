@@ -18,10 +18,13 @@ import { FloatingActionButton } from '../components/mobile/FloatingActionButton'
 import { CoachInsightCard } from '../components/coaching/CoachInsightCard';
 import { TrainingStatusCard } from '../components/coaching/TrainingStatusCard';
 import { WeeklyExecutionCard } from '../components/coaching/WeeklyExecutionCard';
+import { useAuth } from '../context/AuthContext';
+import OnboardingWizard from '../components/onboarding/OnboardingWizard';
 
 export default function DashboardPage() {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
+  const { showOnboarding, completeOnboarding } = useAuth();
   const { visibility, updateVisibility } = useDashboardVisibility();
   const { preferences, chartPreferences, updateChartPreferences, convertDistance, distanceUnit, convertPace, paceUnit } = usePreferences();
 
@@ -507,6 +510,14 @@ export default function DashboardPage() {
           onClick={handleSync}
           position="bottom-right"
           label="Sync Strava"
+        />
+      )}
+
+      {/* Onboarding Wizard for new users */}
+      {showOnboarding && (
+        <OnboardingWizard
+          onComplete={completeOnboarding}
+          onSkip={completeOnboarding}
         />
       )}
     </div>

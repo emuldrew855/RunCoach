@@ -9,5 +9,6 @@ router.use(authenticateToken);
 router.get('/', profileController.getProfile);
 router.put('/', profileController.updateProfile);
 router.post('/recalculate-hr-zones', profileController.recalculateHRZones);
+router.put('/onboarding', profileController.completeOnboarding);
 
 export default router;

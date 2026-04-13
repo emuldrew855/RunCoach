@@ -90,7 +90,7 @@ export async function getCurrentUser(req: Request, res: Response): Promise<void>
 
     // req.user only has id and stravaId from JWT, fetch full user from database
     const result = await query(
-      'SELECT id, strava_id, email, first_name, last_name, profile_picture_url, created_at, last_login_at, is_admin FROM users WHERE id = $1',
+      'SELECT id, strava_id, email, first_name, last_name, profile_picture_url, created_at, last_login_at, is_admin, onboarding_completed FROM users WHERE id = $1',
       [req.user.id]
     );
 

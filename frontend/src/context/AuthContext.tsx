@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
-import { authAPI } from '../services/api';
+import { authAPI, profileAPI } from '../services/api';
 
 interface AuthContextType {
   user: User | null;
@@ -8,6 +8,8 @@ interface AuthContextType {
   login: (token: string) => void;
   logout: () => void;
   isAuthenticated: boolean;
+  showOnboarding: boolean;
+  completeOnboarding: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -15,6 +17,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     // Only check auth once on mount
@@ -31,6 +34,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const response = await authAPI.getCurrentUser();
         if (mounted) {
           setUser(response.data.user);
+          // Show onboarding if user hasn't completed it
+          if (response.data.user && !response.data.user.onboarding_completed) {
+            setShowOnboarding(true);
+          }
         }
       } catch (error) {
         console.error('Auth check failed:', error);
@@ -61,6 +68,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const response = await authAPI.getCurrentUser();
       setUser(response.data.user);
+      // Show onboarding if user hasn't completed it
+      if (response.data.user && !response.data.user.onboarding_completed) {
+        setShowOnboarding(true);
+      }
     } catch (error) {
       console.error('Auth check failed:', error);
       localStorage.removeItem('jwt');
@@ -80,6 +91,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.location.href = '/';
   };
 
+  const completeOnboarding = async () => {
+    try {
+      await profileAPI.completeOnboarding(true);
+      setShowOnboarding(false);
+      // Update user object to reflect onboarding completion
+      if (user) {
+        setUser({ ...user, onboarding_completed: true });
+      }
+    } catch (error) {
+      console.error('Failed to complete onboarding:', error);
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -88,6 +112,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         logout,
         isAuthenticated: !!user,
+        showOnboarding,
+        completeOnboarding,
       }}
     >
       {children}

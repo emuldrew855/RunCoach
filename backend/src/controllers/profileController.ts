@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { getProfileByUserId, upsertProfile } from '../models/UserProfile';
 import { recalculateAllUserHRZones } from '../models/ActivityHRZone';
+import { query } from '../config/database';
 
 export async function getProfile(req: Request, res: Response): Promise<void> {
   try {
@@ -68,5 +69,25 @@ export async function recalculateHRZones(req: Request, res: Response): Promise<v
   } catch (error) {
     console.error('Recalculate HR zones error:', error);
     res.status(500).json({ error: 'Failed to recalculate HR zones' });
+  }
+}
+
+/**
+ * Mark onboarding as completed for the current user
+ */
+export async function completeOnboarding(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    const { completed } = req.body;
+
+    await query(
+      'UPDATE users SET onboarding_completed = $1, updated_at = NOW() WHERE id = $2',
+      [completed !== false, userId]
+    );
+
+    res.json({ success: true, onboarding_completed: completed !== false });
+  } catch (error) {
+    console.error('Complete onboarding error:', error);
+    res.status(500).json({ error: 'Failed to update onboarding status' });
   }
 }

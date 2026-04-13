@@ -61,6 +61,7 @@ export const activitiesAPI = {
 export const profileAPI = {
   getProfile: () => api.get('/profile'),
   updateProfile: (data: any) => api.put('/profile', data),
+  completeOnboarding: (completed: boolean = true) => api.put('/profile/onboarding', { completed }),
 };
 
 // Goals API

@@ -13,6 +13,7 @@ export interface User {
   updated_at: Date;
   last_login_at?: Date;
   last_activity_sync_at?: Date;
+  onboarding_completed?: boolean;
 }
 
 export interface ChartPreferences {
