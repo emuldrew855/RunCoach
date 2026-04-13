@@ -17,8 +17,8 @@ export async function redirectToStrava(_req: Request, res: Response): Promise<vo
     redirectUriEncoded: encodeURIComponent(redirectUri),
   });
 
-  // URL-encode the redirect_uri as required by OAuth 2.0 spec
-  const authUrl = `${stravaConfig.authorizeUrl}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${stravaConfig.scopes}`;
+  // Note: Strava appears to expect unencoded redirect_uri (despite OAuth spec)
+  const authUrl = `${stravaConfig.authorizeUrl}?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${stravaConfig.scopes}`;
 
   logger.info('STRAVA_AUTH_URL_GENERATED', { fullUrl: authUrl });
 
