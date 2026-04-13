@@ -164,7 +164,7 @@ export const TrainingVolumeChart: React.FC<TrainingVolumeChartProps> = ({
       dataKey: 'weekLabel',
       tick: { fontSize: 12, fill: '#64748b' },
       angle: -45,
-      textAnchor: 'end',
+      textAnchor: 'end' as const,
       height: 80,
     };
 

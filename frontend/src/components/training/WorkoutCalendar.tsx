@@ -1029,7 +1029,12 @@ export const WorkoutCalendar: React.FC = () => {
           <MobileAgendaView
             workouts={workouts}
             activities={activities}
-            onWorkoutClick={handleSelectEvent}
+            onWorkoutClick={(workout) => {
+              // Adapt Workout to WorkoutEvent format
+              setIsEditingWorkout(false);
+              setSelectedWorkout({ ...workout, isActivity: false });
+              setShowCreateModal(false);
+            }}
             onActivityClick={(activity) => navigate(`/activity/${activity.id}`)}
             onAddWorkout={(date) => {
               setSelectedDate(date);

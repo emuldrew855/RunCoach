@@ -25,27 +25,27 @@ export function useChartData(
   const queryFn = async () => {
     switch (endpoint) {
       case '/chart-data/pace-comparison':
-        const paceResponse = await chartDataAPI.getPaceComparison(params);
+        const paceResponse = await chartDataAPI.getPaceComparison(params as { activityId: number; distanceMin?: number; distanceMax?: number; limit?: number });
         return paceResponse.data as PaceComparisonData;
 
       case '/chart-data/split-comparison':
-        const splitResponse = await chartDataAPI.getSplitComparison(params);
+        const splitResponse = await chartDataAPI.getSplitComparison(params as { activityId: number; distanceMin?: number; distanceMax?: number; limit?: number });
         return splitResponse.data as SplitComparisonData;
 
       case '/chart-data/hr-zone-distribution':
-        const hrResponse = await chartDataAPI.getHRZoneDistribution(params);
+        const hrResponse = await chartDataAPI.getHRZoneDistribution(params as { activityId: number });
         return hrResponse.data as HRZoneDistributionData;
 
       case '/chart-data/execution-score-trend':
-        const executionResponse = await chartDataAPI.getExecutionScoreTrend(params);
+        const executionResponse = await chartDataAPI.getExecutionScoreTrend(params as { workoutType?: string; limit?: number; days?: number });
         return executionResponse.data as ExecutionScoreTrendData;
 
       case '/chart-data/similar-workouts':
-        const similarResponse = await chartDataAPI.getSimilarWorkouts(params);
+        const similarResponse = await chartDataAPI.getSimilarWorkouts(params as { activityId: number; distanceMin?: number; distanceMax?: number; workoutType?: string; limit?: number });
         return similarResponse.data as SimilarWorkoutsData;
 
       case '/chart-data/pb-progression':
-        const pbResponse = await chartDataAPI.getPBProgression(params);
+        const pbResponse = await chartDataAPI.getPBProgression(params as { distance: number; days?: number });
         return pbResponse.data as PBProgressionData;
 
       default:

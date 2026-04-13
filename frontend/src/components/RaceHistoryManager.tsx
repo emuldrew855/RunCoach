@@ -264,7 +264,7 @@ export default function RaceHistoryManager() {
                   <div className="flex items-center gap-2 mb-1">
                     <h4 className="font-bold text-gray-900 dark:text-gray-100">{race.race_name}</h4>
                     {race.is_personal_best && (
-                      <Award size={16} className="text-yellow-500" title="Personal Best" />
+                      <Award size={16} className="text-yellow-500" aria-label="Personal Best" />
                     )}
                     <span className="text-xs px-2 py-0.5 bg-gray-200 dark:bg-gray-700 rounded-full text-gray-700 dark:text-gray-300">
                       {formatRaceType(race.race_type)}

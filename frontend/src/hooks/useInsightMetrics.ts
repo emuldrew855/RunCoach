@@ -22,7 +22,7 @@ interface InsightMetric {
 }
 
 export function useInsightMetrics() {
-  const { convertDistance, convertPace, units } = usePreferences();
+  const { convertDistance, convertPace, distanceUnit } = usePreferences();
 
   // Fetch recent activities (last 60 days for 8-9 weeks of data)
   const { data: activitiesData } = useQuery({
@@ -192,13 +192,14 @@ export function useInsightMetrics() {
       const paceData = calculatePaceTrends();
       if (paceData) {
         const { data, latest, trend } = paceData;
-        const displayPace = units === 'imperial' ? convertPace(latest) : latest;
-        const paceUnit = units === 'imperial' ? '/mi' : '/km';
+        const isImperial = distanceUnit === 'mi';
+        const displayPace = convertPace(isImperial ? latest * 1.60934 : latest);
+        const paceUnitLabel = isImperial ? '/mi' : '/km';
 
         metrics.push({
           type: 'pace',
           title: 'AVG PACE TREND',
-          value: `${displayPace.toFixed(2).replace('.', ':')}${paceUnit}`,
+          value: `${displayPace}${paceUnitLabel}`,
           trend,
           sparklineData: data,
           color: '#06b6d4'
@@ -211,15 +212,15 @@ export function useInsightMetrics() {
       const volumeData = calculateVolumeTrends();
       if (volumeData) {
         const { data, latest, trend } = volumeData;
-        const displayDistance = convertDistance(latest);
-        const distanceUnit = units === 'imperial' ? 'mi' : 'km';
+        // convertDistance expects meters, but latest is already in km, so multiply by 1000
+        const displayDistance = convertDistance(latest * 1000);
 
         metrics.push({
           type: 'volume',
           title: 'WEEKLY VOLUME',
-          value: `${displayDistance.toFixed(1)} ${distanceUnit}`,
+          value: `${displayDistance} ${distanceUnit}`,
           trend,
-          sparklineData: data.map(d => convertDistance(d)),
+          sparklineData: data.map(d => parseFloat(convertDistance(d * 1000))),
           color: '#0891b2'
         });
       }

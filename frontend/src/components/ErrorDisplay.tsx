@@ -72,7 +72,7 @@ export default function ErrorDisplay({
           {displayMessage}
         </p>
 
-        {error && process.env.NODE_ENV === 'development' && (
+        {error && import.meta.env.DEV && (
           <details className="mt-4 text-left">
             <summary className="text-sm text-gray-500 dark:text-gray-500 cursor-pointer hover:text-gray-700 dark:hover:text-gray-300">
               Technical Details
