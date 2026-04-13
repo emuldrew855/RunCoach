@@ -55,7 +55,7 @@ jobs:
           if [ -d migrations ]; then cp -r migrations deploy/; fi
           cd deploy
           # Install production dependencies in the deploy folder
-          npm ci --only=production
+          npm ci --omit=dev
           zip -r ../backend-deploy.zip .
 
       - name: Azure Login
@@ -107,7 +107,7 @@ jobs:
           cp -r dist package.json package-lock.json deploy/
           cd deploy
           # Install production dependencies in the deploy folder
-          npm ci --only=production
+          npm ci --omit=dev
           zip -r ../agent-deploy.zip .
 
       - name: Azure Login
