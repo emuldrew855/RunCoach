@@ -67,13 +67,6 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Disable Oryx build on App Service
-        run: |
-          az webapp config appsettings set \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_BACKEND_APP_NAME }} \
-            --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false
-
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
         with:
@@ -128,13 +121,6 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Disable Oryx build on App Service
-        run: |
-          az webapp config appsettings set \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AGENT_APP_NAME }} \
-            --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false
-
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
         with:
@@ -185,13 +171,6 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Disable Oryx build on App Service
-        run: |
-          az webapp config appsettings set \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_FRONTEND_APP_NAME }} \
-            --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false
 
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
