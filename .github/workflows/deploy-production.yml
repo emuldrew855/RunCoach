@@ -15,7 +15,7 @@ env:
   NODE_VERSION: '18'
   AZURE_RESOURCE_GROUP: runcoach-rg
   AZURE_REGION: westeurope
-  NODE_OPTIONS: --max-old-space-size=4096
+  NODE_OPTIONS: --max-old-space-size=8192
 
 jobs:
   # Backend deployment
@@ -43,6 +43,8 @@ jobs:
 
       - name: Build backend
         working-directory: ./backend
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: npm run build
 
       - name: Create deployment package
@@ -92,6 +94,8 @@ jobs:
 
       - name: Build agent service
         working-directory: ./agent-service
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: npm run build
 
       - name: Create deployment package
@@ -142,6 +146,7 @@ jobs:
       - name: Build frontend
         working-directory: ./frontend
         env:
+          NODE_OPTIONS: --max-old-space-size=8192
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
           VITE_STRAVA_CLIENT_ID: ${{ secrets.VITE_STRAVA_CLIENT_ID }}
         run: npm run build
