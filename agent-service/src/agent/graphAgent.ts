@@ -48,18 +48,43 @@ export class CoachGraphAgent {
           ORDER BY tablename
         `);
         const tables = result.rows.map(r => r.tablename);
+        const requiredTables = ['checkpoints', 'checkpoint_writes', 'checkpoint_blobs', 'checkpoint_migrations'];
+        const missingTables = requiredTables.filter(t => !tables.includes(t));
 
-        // Only call setup if tables don't exist
-        if (tables.length === 0) {
+        if (missingTables.length > 0) {
+          console.log(`🔧 Missing checkpoint tables: ${missingTables.join(', ')}`);
           console.log('🔧 Setting up PostgreSQL checkpoint tables...');
-          await this.checkpointer.setup();
-          console.log('✓ PostgreSQL checkpoint tables created');
+
+          try {
+            // Try using PostgresSaver.setup() first
+            await this.checkpointer.setup();
+            console.log('✓ PostgreSQL checkpoint tables created via PostgresSaver');
+          } catch (setupError: any) {
+            console.warn(`⚠️ PostgresSaver.setup() failed: ${setupError.message}`);
+            console.log('🔧 Attempting manual table creation...');
+
+            // Fallback: Create tables manually via SQL
+            await this.createCheckpointTablesManually();
+            console.log('✓ PostgreSQL checkpoint tables created via manual SQL');
+          }
         } else {
           console.log('✓ PostgreSQL checkpoint tables already exist');
         }
 
+        // Verify tables were created
+        const verifyResult = await pool.query(`
+          SELECT tablename FROM pg_tables
+          WHERE schemaname = 'public'
+          AND tablename IN ('checkpoints', 'checkpoint_writes', 'checkpoint_blobs', 'checkpoint_migrations')
+        `);
+        const verifiedTables = verifyResult.rows.map(r => r.tablename);
+
+        if (verifiedTables.length < 4) {
+          throw new Error(`Failed to create all checkpoint tables. Found: ${verifiedTables.join(', ')}`);
+        }
+
         this.initialized = true;
-        console.log(`✓ Checkpoint tables verified: ${tables.join(', ') || 'creating...'}`);
+        console.log(`✓ Checkpoint tables verified: ${verifiedTables.join(', ')}`);
       } catch (error: any) {
         // If setup fails due to duplicate key (tables already exist), that's OK
         if (error.code === '23505') {
@@ -74,6 +99,61 @@ export class CoachGraphAgent {
         throw error;
       }
     }
+  }
+
+  /**
+   * Manually create checkpoint tables via SQL
+   * Fallback if PostgresSaver.setup() fails
+   */
+  private async createCheckpointTablesManually(): Promise<void> {
+    // These are the standard LangGraph checkpoint tables
+    const createTablesSql = `
+      -- Checkpoints table
+      CREATE TABLE IF NOT EXISTS checkpoints (
+        thread_id TEXT NOT NULL,
+        checkpoint_ns TEXT NOT NULL DEFAULT '',
+        checkpoint_id TEXT NOT NULL,
+        parent_checkpoint_id TEXT,
+        type TEXT,
+        checkpoint JSONB NOT NULL,
+        metadata JSONB NOT NULL DEFAULT '{}',
+        PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
+      );
+
+      -- Checkpoint writes table
+      CREATE TABLE IF NOT EXISTS checkpoint_writes (
+        thread_id TEXT NOT NULL,
+        checkpoint_ns TEXT NOT NULL DEFAULT '',
+        checkpoint_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        idx INTEGER NOT NULL,
+        channel TEXT NOT NULL,
+        type TEXT,
+        blob BYTEA,
+        PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
+      );
+
+      -- Checkpoint blobs table
+      CREATE TABLE IF NOT EXISTS checkpoint_blobs (
+        thread_id TEXT NOT NULL,
+        checkpoint_ns TEXT NOT NULL DEFAULT '',
+        channel TEXT NOT NULL,
+        version TEXT NOT NULL,
+        type TEXT NOT NULL,
+        blob BYTEA,
+        PRIMARY KEY (thread_id, checkpoint_ns, channel, version)
+      );
+
+      -- Checkpoint migrations table
+      CREATE TABLE IF NOT EXISTS checkpoint_migrations (
+        v INTEGER PRIMARY KEY
+      );
+
+      -- Insert migration version if not exists
+      INSERT INTO checkpoint_migrations (v) VALUES (1) ON CONFLICT (v) DO NOTHING;
+    `;
+
+    await pool.query(createTablesSql);
   }
 
   /**

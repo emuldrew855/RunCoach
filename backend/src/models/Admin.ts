@@ -10,11 +10,14 @@ import { query } from '../config/database';
 // Types
 export interface UserAnalytics {
   id: number;
+  strava_id: number;
   first_name: string;
   last_name: string;
   email: string;
-  user_since: Date;
+  profile_picture_url: string | null;
+  created_at: Date;
   last_login_at: Date;
+  is_admin: boolean;
   total_sessions: number;
   avg_session_duration_seconds: number;
   last_session: Date;

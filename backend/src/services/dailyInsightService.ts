@@ -182,8 +182,9 @@ function analyzePacing(splits: any[]): DailyRunInsight['pacing'] {
   // Strava usually doesn't provide splits - return safe defaults
   if (!splits || splits.length < 2) {
     return {
+      hasSplitsData: false,
       paceDelta: 0,
-      consistency: 1.0,
+      consistency: 0, // Changed from 1.0 - no data means no consistency score
       splitAnalysis: {
         fastestKm: { km: 1, pace: 0 },
         slowestKm: { km: 1, pace: 0 }
@@ -199,8 +200,9 @@ function analyzePacing(splits: any[]): DailyRunInsight['pacing'] {
 
   if (paces.length === 0) {
     return {
+      hasSplitsData: false,
       paceDelta: 0,
-      consistency: 1.0,
+      consistency: 0,
       splitAnalysis: {
         fastestKm: { km: 1, pace: 0 },
         slowestKm: { km: 1, pace: 0 }
@@ -237,6 +239,7 @@ function analyzePacing(splits: any[]): DailyRunInsight['pacing'] {
   const sortedPaces = [...paces].sort((a, b) => a.pace - b.pace);
 
   return {
+    hasSplitsData: true,
     paceDelta: Math.round(paceDelta * 10) / 10,
     consistency: Math.round(consistency * 100) / 100,
     splitAnalysis: {
@@ -272,6 +275,7 @@ async function analyzeHeartRate(
 
   if (hrZonesResult.rows.length === 0 || !avgHR) {
     return {
+      hasData: false,
       avgZone: 0,
       zoneDrift: 0,
       effortMismatch: false,
@@ -288,6 +292,7 @@ async function analyzeHeartRate(
 
   if (totalSeconds === 0) {
     return {
+      hasData: false,
       avgZone: 0,
       zoneDrift: 0,
       effortMismatch: false,
@@ -319,6 +324,7 @@ async function analyzeHeartRate(
   const effortMismatch = avgHR > hrZones.zone2Max && avgPace > 5.5; // HR above Zone 2 on 5:30+ min/km pace
 
   return {
+    hasData: true,
     avgZone: Math.round(avgZone * 10) / 10,
     zoneDrift: Math.round(zoneDrift),
     effortMismatch,
@@ -410,7 +416,8 @@ function checkCompliance(
 ): DailyRunInsight['compliance'] {
   if (!plannedWorkout) {
     return {
-      completedAsPlanned: true,
+      hadPlannedWorkout: false,
+      completedAsPlanned: false, // Changed from true - no plan means nothing to complete
       distanceDeviation: 0,
       paceDeviation: 0,
       hrZoneDeviation: 0,
@@ -454,6 +461,7 @@ function checkCompliance(
   }
 
   return {
+    hadPlannedWorkout: true,
     completedAsPlanned,
     distanceDeviation: Math.round(distanceDeviation * 10) / 10,
     paceDeviation: Math.round(paceDeviation * 10) / 10,
@@ -639,58 +647,75 @@ function generateCoachingPoints(
 
   const msg = PERSONALITY_MESSAGES;
 
-  // Identify strengths
-  if (pacing.paceDelta > 0) {
-    const delta = Math.abs(pacing.paceDelta).toFixed(1);
-    strengths.push(msg.negativeSplit[coachStyle](delta));
+  // Identify strengths - ONLY when we have actual data to support the praise
+
+  // Pacing strengths - only if we have splits data
+  if (pacing.hasSplitsData) {
+    if (pacing.paceDelta > 0) {
+      const delta = Math.abs(pacing.paceDelta).toFixed(1);
+      strengths.push(msg.negativeSplit[coachStyle](delta));
+    }
+    if (pacing.consistency > 0.9) {
+      const score = (pacing.consistency * 100).toFixed(0);
+      strengths.push(msg.paceConsistency[coachStyle](score));
+    }
   }
-  if (pacing.consistency > 0.9) {
-    const score = (pacing.consistency * 100).toFixed(0);
-    strengths.push(msg.paceConsistency[coachStyle](score));
-  }
-  if (compliance.completedAsPlanned) {
+
+  // Compliance strengths - only if there was a planned workout
+  if (compliance.hadPlannedWorkout && compliance.completedAsPlanned) {
     strengths.push(msg.completedAsPlanned[coachStyle]);
   }
-  if (hrBehavior.avgZone >= 1.8 && hrBehavior.avgZone <= 2.2 && effort.perceivedDifficulty === 'easy') {
-    strengths.push(msg.perfectZone2[coachStyle]);
-  }
-  if (hrBehavior.driftRate < 2) {
-    strengths.push(msg.hrControl[coachStyle]);
+
+  // HR strengths - only if we have HR data
+  if (hrBehavior.hasData) {
+    if (hrBehavior.avgZone >= 1.8 && hrBehavior.avgZone <= 2.2 && effort.perceivedDifficulty === 'easy') {
+      strengths.push(msg.perfectZone2[coachStyle]);
+    }
+    if (hrBehavior.driftRate < 2 && hrBehavior.driftRate >= 0) {
+      strengths.push(msg.hrControl[coachStyle]);
+    }
   }
 
-  // Identify improvements
-  if (pacing.paceDelta < -5) {
-    const fadePercent = Math.abs(pacing.paceDelta).toFixed(1);
-    improvements.push(msg.paceFade[coachStyle](fadePercent));
-    nextWorkoutAdjustment = msg.fadeAdjustment[coachStyle];
+  // Identify improvements - only when we have actual data
+
+  // Pacing improvements - only if we have splits data
+  if (pacing.hasSplitsData) {
+    if (pacing.paceDelta < -5) {
+      const fadePercent = Math.abs(pacing.paceDelta).toFixed(1);
+      improvements.push(msg.paceFade[coachStyle](fadePercent));
+      nextWorkoutAdjustment = msg.fadeAdjustment[coachStyle];
+    }
+    if (pacing.consistency < 0.75) {
+      const score = (pacing.consistency * 100).toFixed(0);
+      improvements.push(msg.inconsistentPacing[coachStyle](score));
+    }
   }
 
-  if (hrBehavior.effortMismatch) {
-    improvements.push(msg.effortMismatch[coachStyle]);
-    nextWorkoutAdjustment = msg.hrAdjustment[coachStyle];
+  // HR improvements - only if we have HR data
+  if (hrBehavior.hasData) {
+    if (hrBehavior.effortMismatch) {
+      improvements.push(msg.effortMismatch[coachStyle]);
+      nextWorkoutAdjustment = msg.hrAdjustment[coachStyle];
+    }
+    if (hrBehavior.driftRate > 5) {
+      const drift = hrBehavior.driftRate.toFixed(1);
+      improvements.push(msg.hrDrift[coachStyle](drift));
+    }
   }
 
-  if (pacing.consistency < 0.75) {
-    const score = (pacing.consistency * 100).toFixed(0);
-    improvements.push(msg.inconsistentPacing[coachStyle](score));
-  }
+  // Compliance improvements - only if there was a planned workout
+  if (compliance.hadPlannedWorkout) {
+    if (!compliance.completedAsPlanned && compliance.modifications.length > 0) {
+      const mods = compliance.modifications.join(', ');
+      improvements.push(msg.modifiedWorkout[coachStyle](mods));
+    }
 
-  if (!compliance.completedAsPlanned && compliance.modifications.length > 0) {
-    const mods = compliance.modifications.join(', ');
-    improvements.push(msg.modifiedWorkout[coachStyle](mods));
-  }
-
-  if (hrBehavior.driftRate > 5) {
-    const drift = hrBehavior.driftRate.toFixed(1);
-    improvements.push(msg.hrDrift[coachStyle](drift));
-  }
-
-  // Check for HR zone deviation from target
-  if (compliance.hrZoneDeviation && Math.abs(compliance.hrZoneDeviation) >= 2) {
-    const actualZone = Math.round(hrBehavior.avgZone).toString();
-    // Calculate target zone from actual zone and deviation
-    const targetZone = (Math.round(hrBehavior.avgZone) - compliance.hrZoneDeviation).toString();
-    improvements.push(msg.hrZoneMismatch[coachStyle](actualZone, targetZone));
+    // Check for HR zone deviation from target - only if we have HR data
+    if (hrBehavior.hasData && compliance.hrZoneDeviation && Math.abs(compliance.hrZoneDeviation) >= 2) {
+      const actualZone = Math.round(hrBehavior.avgZone).toString();
+      const targetZone = (Math.round(hrBehavior.avgZone) - compliance.hrZoneDeviation).toString();
+      improvements.push(msg.hrZoneMismatch[coachStyle](actualZone, targetZone));
+    }
   }
 
   // Default if no specific improvements identified

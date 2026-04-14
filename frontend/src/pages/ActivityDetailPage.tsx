@@ -475,6 +475,9 @@ export default function ActivityDetailPage() {
             improvements={insights?.coachingPoints?.improvements ?? []}
             nextWorkoutAdjustment={insights?.coachingPoints?.nextWorkoutAdjustment}
             risks={insights?.risks}
+            hasHRData={insights?.hrBehavior?.hasData ?? (activity.average_heartrate != null && activity.average_heartrate > 0)}
+            hasSplitsData={insights?.pacing?.hasSplitsData ?? false}
+            hadPlannedWorkout={insights?.compliance?.hadPlannedWorkout ?? false}
             onDiscussClick={() => setShowChat(true)}
           />
 

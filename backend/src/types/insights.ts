@@ -32,6 +32,9 @@ export interface DailyRunInsight {
    * Analyzes pace consistency, fade patterns, and split breakdown
    */
   pacing: {
+    /** Whether split data was available from Strava (usually false) */
+    hasSplitsData: boolean;
+
     /** % change from first half to second half (negative = fade, positive = negative split) */
     paceDelta: number;
 
@@ -55,6 +58,9 @@ export interface DailyRunInsight {
    * Analyzes HR zones, drift patterns, and effort calibration
    */
   hrBehavior: {
+    /** Whether HR data was available for this activity */
+    hasData: boolean;
+
     /** Average HR zone (1-5, can be decimal like 2.3) */
     avgZone: number;
 
@@ -94,6 +100,9 @@ export interface DailyRunInsight {
    * Adherence to planned workout
    */
   compliance: {
+    /** Whether there was a planned workout to compare against */
+    hadPlannedWorkout: boolean;
+
     /** True if workout completed as planned */
     completedAsPlanned: boolean;
 

@@ -54,10 +54,20 @@ async function setupCheckpointTables(): Promise<void> {
   try {
     console.log('   🔧 Creating checkpoint tables...');
 
-    const checkpointer = new PostgresSaver(pool);
-    await checkpointer.setup();
+    try {
+      // Try PostgresSaver.setup() first
+      const checkpointer = new PostgresSaver(pool);
+      await checkpointer.setup();
+      console.log('   ✅ Checkpoint tables created via PostgresSaver');
+    } catch (setupError: any) {
+      console.warn(`   ⚠️ PostgresSaver.setup() failed: ${setupError.message}`);
+      console.log('   🔧 Attempting manual table creation...');
 
-    console.log('   ✅ Checkpoint tables created successfully');
+      // Fallback: Create tables manually via SQL
+      await createCheckpointTablesManually();
+      console.log('   ✅ Checkpoint tables created via manual SQL');
+    }
+
     console.log('      - checkpoints');
     console.log('      - checkpoint_writes');
     console.log('      - checkpoint_blobs');
@@ -66,6 +76,60 @@ async function setupCheckpointTables(): Promise<void> {
     console.error('   ❌ Failed to create checkpoint tables:', error.message);
     throw new Error('Checkpoint table setup failed: ' + error.message);
   }
+}
+
+/**
+ * Manually create checkpoint tables via SQL
+ * Fallback if PostgresSaver.setup() fails
+ */
+async function createCheckpointTablesManually(): Promise<void> {
+  const createTablesSql = `
+    -- Checkpoints table
+    CREATE TABLE IF NOT EXISTS checkpoints (
+      thread_id TEXT NOT NULL,
+      checkpoint_ns TEXT NOT NULL DEFAULT '',
+      checkpoint_id TEXT NOT NULL,
+      parent_checkpoint_id TEXT,
+      type TEXT,
+      checkpoint JSONB NOT NULL,
+      metadata JSONB NOT NULL DEFAULT '{}',
+      PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
+    );
+
+    -- Checkpoint writes table
+    CREATE TABLE IF NOT EXISTS checkpoint_writes (
+      thread_id TEXT NOT NULL,
+      checkpoint_ns TEXT NOT NULL DEFAULT '',
+      checkpoint_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      idx INTEGER NOT NULL,
+      channel TEXT NOT NULL,
+      type TEXT,
+      blob BYTEA,
+      PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
+    );
+
+    -- Checkpoint blobs table
+    CREATE TABLE IF NOT EXISTS checkpoint_blobs (
+      thread_id TEXT NOT NULL,
+      checkpoint_ns TEXT NOT NULL DEFAULT '',
+      channel TEXT NOT NULL,
+      version TEXT NOT NULL,
+      type TEXT NOT NULL,
+      blob BYTEA,
+      PRIMARY KEY (thread_id, checkpoint_ns, channel, version)
+    );
+
+    -- Checkpoint migrations table
+    CREATE TABLE IF NOT EXISTS checkpoint_migrations (
+      v INTEGER PRIMARY KEY
+    );
+
+    -- Insert migration version if not exists
+    INSERT INTO checkpoint_migrations (v) VALUES (1) ON CONFLICT (v) DO NOTHING;
+  `;
+
+  await pool.query(createTablesSql);
 }
 
 /**

@@ -18,6 +18,10 @@ interface CoachTakeProps {
     overtrainingSignals: string[];
     recoveryNeeded: boolean;
   };
+  // Data availability flags
+  hasHRData?: boolean;
+  hasSplitsData?: boolean;
+  hadPlannedWorkout?: boolean;
   onDiscussClick?: () => void;
 }
 
@@ -26,9 +30,24 @@ export const CoachTakeCard: React.FC<CoachTakeProps> = ({
   improvements,
   nextWorkoutAdjustment,
   risks,
+  hasHRData = true,
+  hasSplitsData = true,
+  hadPlannedWorkout = true,
   onDiscussClick,
 }) => {
   const navigate = useNavigate();
+
+  // Generate contextual messages based on missing data
+  const missingDataMessages: string[] = [];
+  if (!hasHRData) {
+    missingDataMessages.push('No heart rate data available for this activity');
+  }
+  if (!hadPlannedWorkout) {
+    missingDataMessages.push('No planned workout to compare against');
+  }
+  if (!hasSplitsData) {
+    missingDataMessages.push('No per-kilometer split data available');
+  }
 
   // Risk badge config
   const getRiskConfig = (level: 'low' | 'moderate' | 'high') => {
@@ -54,6 +73,7 @@ export const CoachTakeCard: React.FC<CoachTakeProps> = ({
   };
 
   const hasContent = strengths.length > 0 || improvements.length > 0 || nextWorkoutAdjustment;
+  const hasMissingData = missingDataMessages.length > 0;
 
   if (!hasContent) {
     return (
@@ -65,15 +85,46 @@ export const CoachTakeCard: React.FC<CoachTakeProps> = ({
           </h3>
         </div>
 
-        <div className="flex items-center justify-center py-6 text-center">
-          <div>
-            <div className="w-12 h-12 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mx-auto mb-3">
-              <Brain className="w-6 h-6 text-purple-500" />
+        <div className="py-4">
+          {hasMissingData ? (
+            <div className="space-y-3">
+              <p className="text-sm text-secondary text-center">
+                Limited analysis available due to missing data:
+              </p>
+              <ul className="space-y-1">
+                {missingDataMessages.map((msg, idx) => (
+                  <li key={idx} className="flex items-start gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+                    <span className="text-neutral-400 mt-1">-</span>
+                    <span>{msg}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-tertiary text-center mt-3">
+                Connect a HR monitor or create a training plan for more detailed insights
+              </p>
             </div>
-            <p className="text-sm text-secondary">No analysis available</p>
-            <p className="text-xs text-tertiary mt-1">Insights will be generated after more data</p>
-          </div>
+          ) : (
+            <div className="flex items-center justify-center text-center">
+              <div>
+                <div className="w-12 h-12 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mx-auto mb-3">
+                  <Brain className="w-6 h-6 text-purple-500" />
+                </div>
+                <p className="text-sm text-secondary">No analysis available</p>
+                <p className="text-xs text-tertiary mt-1">Insights will be generated after more data</p>
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* Discuss with Coach Button */}
+        <button
+          onClick={onDiscussClick || (() => navigate('/chat'))}
+          className="w-full flex items-center justify-center gap-2 py-2.5 bg-purple-100 dark:bg-purple-900/30 hover:bg-purple-200 dark:hover:bg-purple-900/50 rounded-lg text-purple-700 dark:text-purple-300 font-medium text-sm transition-colors mt-4"
+        >
+          <MessageCircle className="w-4 h-4" />
+          Discuss with Coach
+          <ChevronRight className="w-4 h-4" />
+        </button>
       </div>
     );
   }
@@ -173,6 +224,21 @@ export const CoachTakeCard: React.FC<CoachTakeProps> = ({
               </span>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Missing Data Notice */}
+      {hasMissingData && (
+        <div className="p-3 bg-neutral-50 dark:bg-neutral-800/50 rounded-lg mb-4 border border-neutral-200 dark:border-neutral-700">
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-1.5">Limited data available:</p>
+          <ul className="space-y-0.5">
+            {missingDataMessages.map((msg, idx) => (
+              <li key={idx} className="text-xs text-neutral-400 dark:text-neutral-500 flex items-start gap-1.5">
+                <span>-</span>
+                <span>{msg}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
