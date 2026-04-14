@@ -1,4 +1,4 @@
-import { CheckCircle, User, Target, Calendar, MessageCircle, ArrowRight, Sparkles } from 'lucide-react';
+import { CheckCircle, User, Target, Calendar, MessageCircle, ArrowRight, Sparkles, Compass } from 'lucide-react';
 import { SetupOption } from './OnboardingWizard';
 
 interface CompleteStepProps {
@@ -7,7 +7,8 @@ interface CompleteStepProps {
   onFinish: () => void;
 }
 
-const stepInfo = {
+const stepInfo: Record<SetupOption, { label: string; icon: typeof User; color: string }> = {
+  intent: { label: 'Running Focus', icon: Compass, color: 'purple' },
   profile: { label: 'Profile', icon: User, color: 'blue' },
   goal: { label: 'Race Goal', icon: Target, color: 'green' },
   plan: { label: 'Training Plan', icon: Calendar, color: 'purple' },

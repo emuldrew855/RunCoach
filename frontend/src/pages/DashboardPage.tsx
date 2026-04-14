@@ -18,6 +18,7 @@ import { FloatingActionButton } from '../components/mobile/FloatingActionButton'
 import { CoachInsightCard } from '../components/coaching/CoachInsightCard';
 import { TrainingStatusCard } from '../components/coaching/TrainingStatusCard';
 import { WeeklyExecutionCard } from '../components/coaching/WeeklyExecutionCard';
+import { SmartAnalysis } from '../components/SmartAnalysis';
 import { useAuth } from '../context/AuthContext';
 import OnboardingWizard from '../components/onboarding/OnboardingWizard';
 
@@ -202,6 +203,9 @@ export default function DashboardPage() {
       {/* Training Status Card - "Am I on track?" (PRIMARY) */}
       <TrainingStatusCard />
 
+      {/* Smart Analysis - AI-powered Status Pulse (INTELLIGENCE LAYER) */}
+      <SmartAnalysis />
+
       {/* Training Alerts */}
       {visibility.alerts && (
         <CollapsibleCard id="alerts" title="Training Alerts">
@@ -311,7 +315,7 @@ export default function DashboardPage() {
                   <MapPin className="text-signal-info" size={20} strokeWidth={1.5} />
                 </div>
                 <p className="text-data-xl text-neutral-900 dark:text-neutral-100 mb-2">
-                  {statsData ? convertDistance(parseFloat(statsData.total_distance)) : '0'}
+                  {statsData?.total_distance ? convertDistance(parseFloat(statsData.total_distance) || 0) : '0'}
                 </p>
                 <p className="text-label-sm text-tertiary uppercase tracking-wide">{distanceUnit}</p>
               </div>

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { profileAPI, goalsAPI } from '../services/api';
-import { UserProfile, Goal, PersonalBests } from '../types';
+import { UserProfile, Goal, PersonalBests, RunnerType } from '../types';
 import toast from 'react-hot-toast';
-import { Save, Target, Edit as EditIcon } from 'lucide-react';
+import { Save, Target, Edit as EditIcon, Trophy, TrendingUp, Heart, Compass } from 'lucide-react';
 import { usePreferences } from '../context/PreferencesContext';
 import CoachStyleSelector, { CoachStyle, CommunicationStyle } from '../components/CoachStyleSelector';
 import RaceHistoryManager from '../components/RaceHistoryManager';
@@ -559,6 +559,119 @@ export default function ProfilePage() {
             toast.success(`Communication style updated to ${style}`);
           }}
         />
+      </div>
+
+      {/* Runner Focus Section */}
+      <div className="card">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
+            <Compass className="text-purple-600 dark:text-purple-400" size={20} />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">Running Focus</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              This guides how your AI coach approaches your training
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {([
+            {
+              type: 'architect' as RunnerType,
+              title: 'Architect',
+              subtitle: 'Race-Focused',
+              description: "Training for a specific race with a time goal. Gets structured plans and targeted feedback.",
+              icon: <Trophy size={20} />,
+              color: 'text-amber-600 dark:text-amber-400',
+              bgColor: 'bg-amber-100 dark:bg-amber-900/30',
+              borderColor: 'border-amber-500',
+            },
+            {
+              type: 'builder' as RunnerType,
+              title: 'Builder',
+              subtitle: 'Improvement-Focused',
+              description: "Actively improving running fitness. Focuses on gradual progression and consistency.",
+              icon: <TrendingUp size={20} />,
+              color: 'text-blue-600 dark:text-blue-400',
+              bgColor: 'bg-blue-100 dark:bg-blue-900/30',
+              borderColor: 'border-blue-500',
+            },
+            {
+              type: 'maintainer' as RunnerType,
+              title: 'Maintainer',
+              subtitle: 'Fitness-Focused',
+              description: "Running for health and fitness. Focuses on consistency, enjoyment, and balance.",
+              icon: <Heart size={20} />,
+              color: 'text-green-600 dark:text-green-400',
+              bgColor: 'bg-green-100 dark:bg-green-900/30',
+              borderColor: 'border-green-500',
+            },
+          ]).map((option) => {
+            const isSelected = profileData?.runner_type === option.type;
+
+            return (
+              <button
+                key={option.type}
+                onClick={() => {
+                  updateProfileMutation.mutate({ runner_type: option.type });
+                  toast.success(`Running focus updated to ${option.title}`);
+                }}
+                className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
+                  isSelected
+                    ? `${option.borderColor} bg-opacity-10 ${option.bgColor}`
+                    : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className={`w-10 h-10 rounded-lg ${option.bgColor} flex items-center justify-center flex-shrink-0`}>
+                    <span className={option.color}>{option.icon}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-gray-900 dark:text-white">
+                        {option.title}
+                      </h3>
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${option.bgColor} ${option.color}`}>
+                        {option.subtitle}
+                      </span>
+                      {isSelected && (
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
+                          Current
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                      {option.description}
+                    </p>
+                  </div>
+                  {isSelected && (
+                    <div className="flex-shrink-0">
+                      <div className={`w-6 h-6 rounded-full ${option.bgColor} flex items-center justify-center`}>
+                        <svg className={`w-4 h-4 ${option.color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {profileData?.runner_type_inferred && (
+          <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg text-sm text-gray-600 dark:text-gray-400">
+            <strong>Auto-detected:</strong> Your running focus was inferred from your activity history.
+            Click a different option above to change it.
+          </div>
+        )}
+
+        {!profileData?.runner_type && (
+          <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-sm text-blue-700 dark:text-blue-300">
+            <strong>Not set:</strong> Select your running focus above to help your AI coach give you better guidance.
+          </div>
+        )}
       </div>
 
       {/* Preferences Section */}

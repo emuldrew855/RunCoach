@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import Layout from '../components/common/Layout';
 import { WorkoutCalendar } from '../components/training/WorkoutCalendar';
 import { TrainingPlanUpload } from '../components/training/TrainingPlanUpload';
 import { WorkoutForm } from '../components/training/WorkoutForm';
 import { TrainingPlanList } from '../components/training/TrainingPlanList';
+import SmartPlanWizard from '../components/training/SmartPlanWizard';
 import { trainingPlanAPI } from '../services/api';
-import ErrorDisplay, { InlineError, LoadingDisplay } from '../components/ErrorDisplay';
+import ErrorDisplay, { LoadingDisplay } from '../components/ErrorDisplay';
 
-type TabType = 'calendar' | 'upload' | 'create' | 'manage';
+type TabType = 'calendar' | 'smart' | 'upload' | 'create' | 'manage';
 
 export const TrainingPlanPage: React.FC = () => {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabType>('calendar');
   const [activePlan, setActivePlan] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -72,8 +75,16 @@ export const TrainingPlanPage: React.FC = () => {
     window.location.reload();
   };
 
+  const handleSmartPlanComplete = () => {
+    // Refresh the active plan and switch to calendar
+    queryClient.invalidateQueries({ queryKey: ['workouts'] });
+    loadActivePlan();
+    setActiveTab('calendar');
+  };
+
   const tabs = [
     { id: 'calendar' as TabType, label: 'Calendar', icon: '📅' },
+    { id: 'smart' as TabType, label: 'Smart Generator', icon: '✨' },
     { id: 'manage' as TabType, label: 'Manage Plans', icon: '📋' },
     { id: 'upload' as TabType, label: 'Upload Plan', icon: '📤' },
     { id: 'create' as TabType, label: 'Create Workout', icon: '✏️' },
@@ -98,7 +109,7 @@ export const TrainingPlanPage: React.FC = () => {
           )}
           {!activePlan && (
             <p className="text-slate-600 dark:text-slate-400">
-              No active training plan. Upload or create one to get started.
+              No active training plan. Use the Smart Generator or upload a plan to get started.
             </p>
           )}
         </div>
@@ -165,6 +176,12 @@ export const TrainingPlanPage: React.FC = () => {
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'smart' && (
+            <div>
+              <SmartPlanWizard onComplete={handleSmartPlanComplete} />
             </div>
           )}
 

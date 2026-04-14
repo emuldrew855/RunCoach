@@ -16,7 +16,15 @@ import {
   deletePlannedWorkout,
 } from '../models/PlannedWorkout';
 import { createPlanFromFile } from '../services/trainingPlanService';
+import { createPlanFromTemplate } from '../services/planTemplateService';
 import { generateProactiveAlerts } from '../services/alertService';
+import {
+  generateSmartPlan,
+  previewSmartPlan,
+  getGoalTypeOptions,
+  SmartPlanInput,
+  GoalType,
+} from '../services/smartPlanGeneratorService';
 
 /**
  * Convert database/internal errors to user-friendly messages
@@ -124,6 +132,134 @@ export async function createManualPlan(req: Request, res: Response): Promise<voi
     console.error('Create plan error:', error);
     res.status(500).json({ error: getUserFriendlyError(error) });
   }
+}
+
+export async function createFromTemplate(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    const { templateId } = req.body;
+
+    if (!templateId) {
+      res.status(400).json({ error: 'Template ID is required' });
+      return;
+    }
+
+    const result = await createPlanFromTemplate(userId, templateId);
+
+    res.json({
+      plan: result.plan,
+      workoutCount: result.workoutCount,
+      message: `Created "${result.plan.name}" with ${result.workoutCount} workouts`,
+    });
+  } catch (error) {
+    console.error('Create from template error:', error);
+    if (error instanceof Error && error.message.includes('not found')) {
+      res.status(404).json({ error: error.message });
+    } else {
+      res.status(500).json({ error: getUserFriendlyError(error) });
+    }
+  }
+}
+
+export async function generateSmartPlanController(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    const {
+      goalType,
+      targetWeeklyKm,
+      daysPerWeek,
+      raceDate,
+      targetTimeSeconds,
+      longRunDay,
+      planName,
+    } = req.body;
+
+    // Validate required fields
+    if (!goalType) {
+      res.status(400).json({ error: 'Goal type is required' });
+      return;
+    }
+
+    if (!daysPerWeek || ![3, 4, 5, 6].includes(daysPerWeek)) {
+      res.status(400).json({ error: 'Days per week must be 3, 4, 5, or 6' });
+      return;
+    }
+
+    if (targetWeeklyKm !== 'baseline' && (typeof targetWeeklyKm !== 'number' || targetWeeklyKm <= 0)) {
+      res.status(400).json({ error: 'Target weekly km must be a positive number or "baseline"' });
+      return;
+    }
+
+    const input: SmartPlanInput = {
+      userId,
+      goalType: goalType as GoalType,
+      targetWeeklyKm: targetWeeklyKm === 'baseline' ? 'baseline' : Number(targetWeeklyKm),
+      daysPerWeek,
+      raceDate,
+      targetTimeSeconds: targetTimeSeconds ? Number(targetTimeSeconds) : undefined,
+      longRunDay: longRunDay || 'sunday',
+      planName,
+    };
+
+    const result = await generateSmartPlan(input);
+
+    res.json({
+      plan: result.plan,
+      workoutCount: result.workouts.length,
+      summary: result.summary,
+      message: `Created "${result.plan.name}" with ${result.workouts.length} workouts`,
+    });
+  } catch (error) {
+    console.error('Generate smart plan error:', error);
+    res.status(500).json({ error: getUserFriendlyError(error) });
+  }
+}
+
+export async function previewSmartPlanController(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    const {
+      goalType,
+      targetWeeklyKm,
+      daysPerWeek,
+      raceDate,
+      targetTimeSeconds,
+      longRunDay,
+    } = req.body;
+
+    // Validate required fields
+    if (!goalType) {
+      res.status(400).json({ error: 'Goal type is required' });
+      return;
+    }
+
+    if (!daysPerWeek || ![3, 4, 5, 6].includes(daysPerWeek)) {
+      res.status(400).json({ error: 'Days per week must be 3, 4, 5, or 6' });
+      return;
+    }
+
+    const input: SmartPlanInput = {
+      userId,
+      goalType: goalType as GoalType,
+      targetWeeklyKm: targetWeeklyKm === 'baseline' ? 'baseline' : Number(targetWeeklyKm) || 'baseline',
+      daysPerWeek,
+      raceDate,
+      targetTimeSeconds: targetTimeSeconds ? Number(targetTimeSeconds) : undefined,
+      longRunDay: longRunDay || 'sunday',
+    };
+
+    const preview = await previewSmartPlan(input);
+
+    res.json(preview);
+  } catch (error) {
+    console.error('Preview smart plan error:', error);
+    res.status(500).json({ error: getUserFriendlyError(error) });
+  }
+}
+
+export function getSmartPlanOptions(_req: Request, res: Response): void {
+  const options = getGoalTypeOptions();
+  res.json({ goalTypes: options });
 }
 
 export async function updatePlanController(req: Request, res: Response): Promise<void> {

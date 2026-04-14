@@ -26,6 +26,10 @@ export interface UserAnalytics {
   total_activities: number;
   total_chat_messages: number;
   pending_actions_count: number;
+  // New fields from updated view
+  total_training_plans: number;
+  total_planned_workouts: number;
+  last_activity_date: Date | null;
 }
 
 export interface SystemAnalytics {
@@ -117,7 +121,8 @@ export async function getAllUsersWithAnalytics(
   const numericFields = [
     'id', 'total_sessions', 'avg_session_duration_seconds',
     'total_page_views', 'total_api_calls', 'total_activities',
-    'total_chat_messages', 'pending_actions_count'
+    'total_chat_messages', 'pending_actions_count',
+    'total_training_plans', 'total_planned_workouts'
   ];
 
   return result.rows.map(row => parseNumericFields(row, numericFields));
@@ -137,7 +142,8 @@ export async function getUserAnalytics(userId: number): Promise<UserAnalytics | 
   const numericFields = [
     'id', 'total_sessions', 'avg_session_duration_seconds',
     'total_page_views', 'total_api_calls', 'total_activities',
-    'total_chat_messages', 'pending_actions_count'
+    'total_chat_messages', 'pending_actions_count',
+    'total_training_plans', 'total_planned_workouts'
   ];
 
   return parseNumericFields(result.rows[0], numericFields);
@@ -160,7 +166,8 @@ export async function searchUsers(searchTerm: string): Promise<UserAnalytics[]> 
   const numericFields = [
     'id', 'total_sessions', 'avg_session_duration_seconds',
     'total_page_views', 'total_api_calls', 'total_activities',
-    'total_chat_messages', 'pending_actions_count'
+    'total_chat_messages', 'pending_actions_count',
+    'total_training_plans', 'total_planned_workouts'
   ];
 
   return result.rows.map(row => parseNumericFields(row, numericFields));

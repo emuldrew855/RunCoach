@@ -168,6 +168,18 @@ export default function ChatPage() {
     }
   }, [selectedConversation]);
 
+  // Reload messages when tab becomes visible to prevent stale/duplicate state
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && selectedConversation && !isStreaming) {
+        loadMessages(selectedConversation);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [selectedConversation, isStreaming]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingMessage]);
@@ -179,10 +191,22 @@ export default function ChatPage() {
       const response = await chatAPI.getConversationHistory(conversationId);
       const fetchedMessages = response.data.data.messages;
 
-      // Deduplicate messages by ID (in case of any race conditions)
-      const uniqueMessages = fetchedMessages.filter((msg: ChatMessage, index: number, self: ChatMessage[]) =>
-        index === self.findIndex((m) => m.id === msg.id)
-      );
+      // Deduplicate messages - by ID first, then by content+role as fallback
+      // This handles optimistic messages that have temporary IDs
+      const seen = new Set<string>();
+      const uniqueMessages = fetchedMessages.filter((msg: ChatMessage) => {
+        // Primary key: database ID
+        const idKey = `id:${msg.id}`;
+        if (seen.has(idKey)) return false;
+        seen.add(idKey);
+
+        // Secondary key: content + role (catches optimistic duplicates)
+        const contentKey = `${msg.role}:${msg.content.substring(0, 100)}`;
+        if (seen.has(contentKey)) return false;
+        seen.add(contentKey);
+
+        return true;
+      });
 
       setMessages(uniqueMessages);
     } catch (error: any) {
@@ -344,6 +368,8 @@ export default function ChatPage() {
   const generateSmartTitle = (message: string, context?: any): string => {
     // Detect patterns in the first message to generate a meaningful title
     const lowerMessage = message.toLowerCase();
+    const today = new Date();
+    const dateStr = today.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
     // Use context if available for more specific titles
     if (context?.type === 'weekly_analysis' && context.weekStart && context.weekEnd) {
@@ -362,38 +388,85 @@ export default function ChatPage() {
       return `Plan Review - ${startStr} to ${endStr}`;
     }
 
-    if (lowerMessage.includes('weekly analysis') || lowerMessage.includes('analyze my training week')) {
-      const date = new Date();
-      return `Weekly Analysis - ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    // Pattern matching for common topics
+    if (lowerMessage.includes('weekly analysis') || lowerMessage.includes('analyze my training week') || lowerMessage.includes('my week')) {
+      return `Weekly Analysis - ${dateStr}`;
     }
 
-    if (lowerMessage.includes('review my plan') || lowerMessage.includes('planned training week')) {
-      const date = new Date();
-      return `Plan Review - ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    if (lowerMessage.includes('review my plan') || lowerMessage.includes('planned training week') || lowerMessage.includes('upcoming week')) {
+      return `Plan Review - ${dateStr}`;
     }
 
-    if (lowerMessage.includes('run from') || lowerMessage.includes('discuss my run')) {
-      return 'Run Discussion';
+    if (lowerMessage.includes('run from') || lowerMessage.includes('discuss my run') || lowerMessage.includes('about my run')) {
+      return `Run Discussion - ${dateStr}`;
     }
 
-    if (lowerMessage.includes('goal') || lowerMessage.includes('marathon') || lowerMessage.includes('race')) {
-      return 'Goal Planning';
+    if (lowerMessage.includes('marathon')) {
+      return `Marathon Training - ${dateStr}`;
     }
 
-    if (lowerMessage.includes('injury') || lowerMessage.includes('pain') || lowerMessage.includes('hurt')) {
-      return 'Injury/Recovery';
+    if (lowerMessage.includes('half marathon') || lowerMessage.includes('half-marathon')) {
+      return `Half Marathon - ${dateStr}`;
     }
 
-    if (lowerMessage.includes('training plan') || lowerMessage.includes('workout')) {
-      return 'Training Plan';
+    if (lowerMessage.includes('5k') || lowerMessage.includes('5 k')) {
+      return `5K Training - ${dateStr}`;
     }
 
-    if (lowerMessage.includes('nutrition') || lowerMessage.includes('diet') || lowerMessage.includes('fuel')) {
-      return 'Nutrition Advice';
+    if (lowerMessage.includes('10k') || lowerMessage.includes('10 k')) {
+      return `10K Training - ${dateStr}`;
     }
 
-    // Default: first 40 characters of message
-    return message.length > 40 ? message.substring(0, 40) + '...' : message;
+    if (lowerMessage.includes('goal') || lowerMessage.includes('race')) {
+      return `Goal Planning - ${dateStr}`;
+    }
+
+    if (lowerMessage.includes('injury') || lowerMessage.includes('pain') || lowerMessage.includes('hurt') || lowerMessage.includes('sore')) {
+      return `Injury/Recovery - ${dateStr}`;
+    }
+
+    if (lowerMessage.includes('training plan') || lowerMessage.includes('plan')) {
+      return `Training Plan - ${dateStr}`;
+    }
+
+    if (lowerMessage.includes('workout') || lowerMessage.includes('session')) {
+      return `Workout Help - ${dateStr}`;
+    }
+
+    if (lowerMessage.includes('nutrition') || lowerMessage.includes('diet') || lowerMessage.includes('fuel') || lowerMessage.includes('eat')) {
+      return `Nutrition Advice - ${dateStr}`;
+    }
+
+    if (lowerMessage.includes('recovery') || lowerMessage.includes('rest') || lowerMessage.includes('sleep')) {
+      return `Recovery Tips - ${dateStr}`;
+    }
+
+    if (lowerMessage.includes('pace') || lowerMessage.includes('speed') || lowerMessage.includes('faster')) {
+      return `Pace/Speed - ${dateStr}`;
+    }
+
+    if (lowerMessage.includes('heart rate') || lowerMessage.includes('hr zone') || lowerMessage.includes('zone')) {
+      return `HR Zones - ${dateStr}`;
+    }
+
+    if (lowerMessage.includes('taper') || lowerMessage.includes('before race')) {
+      return `Race Prep - ${dateStr}`;
+    }
+
+    if (lowerMessage.includes('strength') || lowerMessage.includes('cross train')) {
+      return `Cross Training - ${dateStr}`;
+    }
+
+    // Extract key words from the message for a more specific title
+    const keyWords = message.match(/\b(tempo|interval|long run|easy run|fartlek|hill|track)\b/i);
+    if (keyWords) {
+      const workoutType = keyWords[1].charAt(0).toUpperCase() + keyWords[1].slice(1).toLowerCase();
+      return `${workoutType} Discussion - ${dateStr}`;
+    }
+
+    // Default: first 35 characters of message + date
+    const truncated = message.length > 35 ? message.substring(0, 35).trim() + '...' : message;
+    return `${truncated} - ${dateStr}`;
   };
 
   const handleSendMessage = async () => {
@@ -440,9 +513,12 @@ export default function ChatPage() {
     setStreamingMessage('');
 
     // Auto-generate title for conversations that don't have one yet
-    const currentConv = conversations?.find(c => c.id === conversationId);
+    // Check if this is the first message by looking at current messages state
     const isFirstMessage = messages.length === 0;
-    if (isFirstMessage && currentConv && !currentConv.title) {
+    const currentConv = conversations?.find(c => c.id === conversationId);
+    const hasNoTitle = !currentConv?.title || currentConv.title === 'New conversation';
+
+    if (isFirstMessage || hasNoTitle) {
       const smartTitle = generateSmartTitle(messageText, activityContext);
       try {
         await chatAPI.updateConversation(conversationId, smartTitle);

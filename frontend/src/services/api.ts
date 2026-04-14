@@ -94,6 +94,51 @@ export const chatAPI = {
     api.post(`/agent/actions/${actionId}/reject`, { reason }),
 };
 
+// Smart Plan Generator types
+export interface SmartPlanParams {
+  goalType: '5k' | '10k' | 'half_marathon' | 'marathon' | 'general';
+  targetWeeklyKm: number | 'baseline';
+  daysPerWeek: 3 | 4 | 5 | 6;
+  raceDate?: string;
+  targetTimeSeconds?: number;
+  longRunDay?: 'saturday' | 'sunday';
+  planName?: string;
+}
+
+export interface SmartPlanPreview {
+  weeks: {
+    weekNumber: number;
+    isStepBack: boolean;
+    isTaper: boolean;
+    totalKm: number;
+    workouts: {
+      dayOfWeek: string;
+      type: string;
+      name: string;
+      distanceKm: number;
+      paceTarget?: string;
+      hrZone?: number;
+      description: string;
+    }[];
+  }[];
+  summary: {
+    totalWeeks: number;
+    buildWeeks: number;
+    taperWeeks: number;
+    peakWeeklyKm: number;
+    startingWeeklyKm: number;
+    totalWorkouts: number;
+    hasTaper: boolean;
+    taperStartsWeek?: number;
+    paceTargets: {
+      easy: { min: number; max: number };
+      tempo: { min: number; max: number };
+      interval: { min: number; max: number };
+      longRun: { min: number; max: number };
+    } | null;
+  };
+}
+
 // Training Plan API
 export const trainingPlanAPI = {
   getPlans: () => api.get('/training/plans'),
@@ -103,8 +148,14 @@ export const trainingPlanAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
   createPlan: (data: any) => api.post('/training/plans', data),
+  createFromTemplate: (templateId: string) => api.post('/training/plans/from-template', { templateId }),
   updatePlan: (id: number, data: any) => api.put(`/training/plans/${id}`, data),
   deletePlan: (id: number) => api.delete(`/training/plans/${id}`),
+
+  // Smart Plan Generator
+  getSmartPlanOptions: () => api.get('/training/plans/smart-options'),
+  previewSmartPlan: (params: SmartPlanParams) => api.post<SmartPlanPreview>('/training/plans/preview', params),
+  generateSmartPlan: (params: SmartPlanParams) => api.post('/training/plans/generate', params),
 
   getWorkouts: (params?: { planId?: number; startDate?: string; endDate?: string; days?: number }) =>
     api.get('/training/workouts', { params }),
@@ -157,12 +208,29 @@ export const memoryAPI = {
   consolidate: () => api.post('/memories/consolidate'),
 };
 
+// Smart Analysis Types
+export interface SmartAnalysis {
+  isVisible: boolean;
+  runnerType: 'ghost' | 'architect' | 'builder' | 'maintainer';
+  status: 'OPTIMIZING' | 'ON_TRACK' | 'OVERREACHING' | 'RECOVERING' | 'BUILDING' | 'STABLE' | 'INCONSISTENT' | 'RESTING';
+  statusLabel: string;
+  analysis: string;
+  sentiment: 'positive' | 'warning' | 'neutral';
+  highlightedMetric?: {
+    label: string;
+    value: string;
+    unit: string;
+  };
+  generatedAt: string;
+}
+
 // Coaching API (AI-powered coaching features)
 export const coachingAPI = {
   getDailyInsight: () => api.get('/coaching/daily-insight'),
   dismissInsight: () => api.post('/coaching/daily-insight/dismiss'),
   getTrainingStatus: () => api.get('/coaching/training-status'),
   getWeeklyExecution: () => api.get('/coaching/weekly-execution'),
+  getSmartAnalysis: () => api.get<{ data: { analysis: SmartAnalysis } }>('/coaching/smart-analysis'),
 };
 
 // Chart Data API (Dynamic performance visualizations)

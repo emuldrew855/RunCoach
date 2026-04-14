@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { User, Target, Calendar, MessageCircle, ChevronRight } from 'lucide-react';
+import { User, Target, Calendar, MessageCircle, ChevronRight, Compass } from 'lucide-react';
 import { SetupOption } from './OnboardingWizard';
 
 interface WelcomeStepProps {
@@ -16,6 +16,13 @@ interface SetupOptionConfig {
 }
 
 const setupOptions: SetupOptionConfig[] = [
+  {
+    id: 'intent',
+    icon: Compass,
+    title: 'Define your running focus',
+    description: 'Help your AI coach understand your goals',
+    color: 'purple',
+  },
   {
     id: 'profile',
     icon: User,
@@ -47,7 +54,7 @@ const setupOptions: SetupOptionConfig[] = [
 ];
 
 export default function WelcomeStep({ onNext, onSkip }: WelcomeStepProps) {
-  const [selected, setSelected] = useState<SetupOption[]>(['profile', 'goal']);
+  const [selected, setSelected] = useState<SetupOption[]>(['intent', 'profile', 'goal']);
 
   const toggleOption = (option: SetupOption) => {
     setSelected((prev) =>
@@ -58,7 +65,7 @@ export default function WelcomeStep({ onNext, onSkip }: WelcomeStepProps) {
   };
 
   const handleSelectAll = () => {
-    setSelected(['profile', 'goal', 'plan', 'coach']);
+    setSelected(['intent', 'profile', 'goal', 'plan', 'coach']);
   };
 
   const handleSelectNone = () => {

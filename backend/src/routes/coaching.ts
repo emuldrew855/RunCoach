@@ -12,6 +12,7 @@ import { authenticateToken } from '../middleware/auth';
 import { generateDailyInsight, dismissInsight } from '../services/coachInsightService';
 import { getTrainingStatus } from '../services/trainingStatusService';
 import { getWeeklyExecutionSummary } from '../services/executionScoringService';
+import { getSmartAnalysisCached } from '../services/performanceAnalysisService';
 import { getProfileByUserId } from '../models/UserProfile';
 import { successResponse } from '../utils/apiResponse';
 
@@ -106,6 +107,27 @@ router.get('/weekly-execution', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to get weekly execution summary',
+    });
+  }
+});
+
+/**
+ * GET /api/coaching/smart-analysis
+ * Get the AI-powered performance analysis "Status Pulse"
+ * Returns intelligent insights based on runner type and training state
+ */
+router.get('/smart-analysis', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user!.id;
+
+    const analysis = await getSmartAnalysisCached(userId);
+
+    res.json(successResponse({ analysis }));
+  } catch (error: any) {
+    console.error('Error getting smart analysis:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to generate smart analysis',
     });
   }
 });

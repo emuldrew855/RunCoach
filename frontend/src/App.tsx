@@ -7,6 +7,7 @@ import ActivityDetailPage from './pages/ActivityDetailPage';
 import ChatPage from './pages/ChatPage';
 import ProfilePage from './pages/ProfilePage';
 import { TrainingPlanPage } from './pages/TrainingPlanPage';
+import { PlanBuilderPage } from './pages/PlanBuilderPage';
 import Layout from './components/common/Layout';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import UsersPage from './pages/admin/UsersPage';
@@ -78,6 +79,14 @@ function App() {
         element={
           <ProtectedRoute>
             <TrainingPlanPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/plan-builder"
+        element={
+          <ProtectedRoute>
+            <PlanBuilderPage />
           </ProtectedRoute>
         }
       />

@@ -63,6 +63,23 @@ export interface PersonalBests {
   'marathon'?: number;
 }
 
+// Runner type classification for intent-based coaching
+export type RunnerType = 'architect' | 'builder' | 'maintainer';
+
+// Rolling baseline for trend-based coaching (plan-less users)
+export interface RollingBaseline {
+  avgDistanceKm: number;
+  avgRunsPerWeek: number;
+  avgLongestRunKm: number;
+  avgPaceMinKm: number;
+  thisWeekDistanceKm: number;
+  thisWeekRuns: number;
+  percentOfBaseline: number;
+  distanceTrend: 'increasing' | 'stable' | 'decreasing';
+  paceTrend: 'improving' | 'stable' | 'declining';
+  weeksOfData: number;
+}
+
 export interface UserProfile {
   id?: number;
   user_id?: number;
@@ -88,6 +105,11 @@ export interface UserProfile {
   hr_zone_3_max?: number; // Zone 3 upper bound (bpm)
   hr_zone_4_max?: number; // Zone 4 upper bound (bpm)
   hr_zone_5_max?: number; // Zone 5 upper bound (bpm)
+  // Runner intent fields
+  runner_type?: RunnerType;
+  current_focus?: string;
+  runner_type_inferred?: boolean;
+  runner_type_set_at?: string;
 }
 
 export interface Goal {

@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, LogIn, Activity, MessageSquare, Calendar, Clock } from 'lucide-react';
+import { ArrowLeft, LogIn, Activity, MessageSquare, Target, CalendarCheck } from 'lucide-react';
 import { adminAPI } from '../../services/adminApi';
 import AdminLayout from '../../components/admin/AdminLayout';
 import AdminErrorState from '../../components/admin/AdminErrorState';
@@ -24,8 +24,12 @@ interface UserDetails {
   total_sessions: number;
   avg_session_duration_seconds: number;
   total_page_views: number;
+  total_api_calls: number;
   total_activities: number;
   total_chat_messages: number;
+  total_training_plans: number;
+  total_planned_workouts: number;
+  last_activity_date: string | null;
 }
 
 export default function UserDetailPage() {
@@ -191,16 +195,6 @@ export default function UserDetailPage() {
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <StatCard
-            icon={<Calendar className="w-5 h-5" />}
-            label="Total Sessions"
-            value={(user.total_sessions || 0).toString()}
-          />
-          <StatCard
-            icon={<Clock className="w-5 h-5" />}
-            label="Avg Session Duration"
-            value={`${Math.round((user.avg_session_duration_seconds || 0) / 60)} min`}
-          />
-          <StatCard
             icon={<Activity className="w-5 h-5" />}
             label="Total Activities"
             value={(user.total_activities || 0).toString()}
@@ -210,16 +204,45 @@ export default function UserDetailPage() {
             label="Chat Messages"
             value={(user.total_chat_messages || 0).toString()}
           />
+          <StatCard
+            icon={<Target className="w-5 h-5" />}
+            label="Training Plans"
+            value={(user.total_training_plans || 0).toString()}
+          />
+          <StatCard
+            icon={<CalendarCheck className="w-5 h-5" />}
+            label="Planned Workouts"
+            value={(user.total_planned_workouts || 0).toString()}
+          />
         </div>
 
-        {/* Page Views */}
+        {/* Engagement */}
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
             Engagement
           </h3>
-          <p className="text-gray-600 dark:text-gray-400">
-            Total page views: <span className="font-semibold">{user.total_page_views || 0}</span>
-          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">API Calls</p>
+              <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                {user.total_api_calls || 0}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Last Activity</p>
+              <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                {user.last_activity_date
+                  ? new Date(user.last_activity_date).toLocaleDateString()
+                  : 'No activities'}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Account Age</p>
+              <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                {Math.floor((Date.now() - new Date(user.created_at).getTime()) / (1000 * 60 * 60 * 24))} days
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 

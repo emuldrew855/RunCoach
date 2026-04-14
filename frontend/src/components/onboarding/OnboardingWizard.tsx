@@ -1,20 +1,21 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import WelcomeStep from './WelcomeStep';
+import IntentStep from './IntentStep';
 import ProfileStep from './ProfileStep';
 import GoalStep from './GoalStep';
 import PlanStep from './PlanStep';
 import CoachStep from './CoachStep';
 import CompleteStep from './CompleteStep';
 
-export type SetupOption = 'profile' | 'goal' | 'plan' | 'coach';
+export type SetupOption = 'intent' | 'profile' | 'goal' | 'plan' | 'coach';
 
 interface OnboardingWizardProps {
   onComplete: () => void;
   onSkip: () => void;
 }
 
-type Step = 'welcome' | 'profile' | 'goal' | 'plan' | 'coach' | 'complete';
+type Step = 'welcome' | 'intent' | 'profile' | 'goal' | 'plan' | 'coach' | 'complete';
 
 export default function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps) {
   const [currentStep, setCurrentStep] = useState<Step>('welcome');
@@ -25,6 +26,7 @@ export default function OnboardingWizard({ onComplete, onSkip }: OnboardingWizar
   // Get the ordered list of steps based on selected options
   const getStepOrder = (): Step[] => {
     const steps: Step[] = ['welcome'];
+    if (selectedOptions.includes('intent')) steps.push('intent');
     if (selectedOptions.includes('profile')) steps.push('profile');
     if (selectedOptions.includes('goal')) steps.push('goal');
     if (selectedOptions.includes('plan')) steps.push('plan');
@@ -116,6 +118,13 @@ export default function OnboardingWizard({ onComplete, onSkip }: OnboardingWizar
             <WelcomeStep
               onNext={handleWelcomeNext}
               onSkip={onSkip}
+            />
+          )}
+          {currentStep === 'intent' && (
+            <IntentStep
+              onComplete={() => handleStepComplete('intent')}
+              onSkip={() => handleStepSkip('intent')}
+              onBack={handleBack}
             />
           )}
           {currentStep === 'profile' && (

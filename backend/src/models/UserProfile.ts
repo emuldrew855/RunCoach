@@ -16,8 +16,9 @@ export async function upsertProfile(profile: Partial<UserProfile> & { user_id: n
       typical_weekly_mileage, injury_history, preferred_units, week_starts_on, timezone,
       training_block_start, training_block_end, coach_style, coach_strictness_level, coach_communication_style,
       chart_preferences, personal_bests,
-      hr_zone_1_max, hr_zone_2_max, hr_zone_3_max, hr_zone_4_max, hr_zone_5_max
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+      hr_zone_1_max, hr_zone_2_max, hr_zone_3_max, hr_zone_4_max, hr_zone_5_max,
+      runner_type, current_focus, runner_type_inferred, runner_type_set_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
     ON CONFLICT (user_id)
     DO UPDATE SET
       age = COALESCE(EXCLUDED.age, user_profiles.age),
@@ -42,6 +43,10 @@ export async function upsertProfile(profile: Partial<UserProfile> & { user_id: n
       hr_zone_3_max = COALESCE(EXCLUDED.hr_zone_3_max, user_profiles.hr_zone_3_max),
       hr_zone_4_max = COALESCE(EXCLUDED.hr_zone_4_max, user_profiles.hr_zone_4_max),
       hr_zone_5_max = COALESCE(EXCLUDED.hr_zone_5_max, user_profiles.hr_zone_5_max),
+      runner_type = COALESCE(EXCLUDED.runner_type, user_profiles.runner_type),
+      current_focus = COALESCE(EXCLUDED.current_focus, user_profiles.current_focus),
+      runner_type_inferred = COALESCE(EXCLUDED.runner_type_inferred, user_profiles.runner_type_inferred),
+      runner_type_set_at = COALESCE(EXCLUDED.runner_type_set_at, user_profiles.runner_type_set_at),
       updated_at = NOW()
     RETURNING *`,
     [
@@ -68,6 +73,10 @@ export async function upsertProfile(profile: Partial<UserProfile> & { user_id: n
       profile.hr_zone_3_max ?? null,
       profile.hr_zone_4_max ?? null,
       profile.hr_zone_5_max ?? null,
+      profile.runner_type ?? null,
+      profile.current_focus ?? null,
+      profile.runner_type_inferred ?? false,
+      profile.runner_type_set_at ?? null,
     ]
   );
   return result.rows[0];

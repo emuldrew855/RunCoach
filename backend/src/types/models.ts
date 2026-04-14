@@ -33,6 +33,9 @@ export interface PersonalBests {
   'marathon'?: number;
 }
 
+// Runner type classification for intent-based coaching
+export type RunnerType = 'architect' | 'builder' | 'maintainer';
+
 export interface UserProfile {
   id: number;
   user_id: number;
@@ -58,8 +61,50 @@ export interface UserProfile {
   hr_zone_3_max?: number; // Zone 3 upper bound (bpm)
   hr_zone_4_max?: number; // Zone 4 upper bound (bpm)
   hr_zone_5_max?: number; // Zone 5 upper bound (bpm)
+  // Runner intent fields
+  runner_type?: RunnerType;
+  current_focus?: string;
+  runner_type_inferred?: boolean;
+  runner_type_set_at?: Date;
   created_at: Date;
   updated_at: Date;
+}
+
+// Baseline metrics for trend tracking (plan-less coaching)
+export interface BaselineMetrics {
+  id: number;
+  user_id: number;
+  week_start: Date;
+  total_distance_km: number;
+  run_count: number;
+  longest_run_km: number;
+  total_duration_seconds: number;
+  avg_pace_min_km: number;
+  avg_hr: number | null;
+  zone_1_2_percent: number | null;
+  zone_3_percent: number | null;
+  zone_4_5_percent: number | null;
+  rolling_avg_distance_km: number;
+  rolling_avg_runs_per_week: number;
+  rolling_avg_longest_run_km: number;
+  rolling_avg_pace_min_km: number;
+  distance_trend_percent: number;
+  pace_trend_percent: number;
+  computed_at: Date;
+}
+
+// Rolling baseline for coaching context
+export interface RollingBaseline {
+  avgDistanceKm: number;
+  avgRunsPerWeek: number;
+  avgLongestRunKm: number;
+  avgPaceMinKm: number;
+  thisWeekDistanceKm: number;
+  thisWeekRuns: number;
+  percentOfBaseline: number;
+  distanceTrend: 'increasing' | 'stable' | 'decreasing';
+  paceTrend: 'improving' | 'stable' | 'declining';
+  weeksOfData: number;
 }
 
 // Race history

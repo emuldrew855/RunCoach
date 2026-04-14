@@ -16,7 +16,9 @@
 
 import pool from '../config/database';
 import { DailyRunInsight } from '../types/insights';
+import { RollingBaseline, RunnerType } from '../types/models';
 import { calculateExecutionScore, ExecutionScore } from './executionScoringService';
+import { get4WeekRollingBaseline } from './baselineMetricsService';
 
 /**
  * Coach Style Type
@@ -81,6 +83,33 @@ async function getUserCoachStyle(userId: number): Promise<CoachStyle> {
 }
 
 /**
+ * Fetch user's runner type from profile
+ */
+async function getUserRunnerType(userId: number): Promise<RunnerType | null> {
+  const result = await pool.query(
+    `SELECT runner_type FROM user_profiles WHERE user_id = $1`,
+    [userId]
+  );
+
+  if (result.rows.length === 0 || !result.rows[0].runner_type) {
+    return null;
+  }
+
+  return result.rows[0].runner_type as RunnerType;
+}
+
+/**
+ * Check if user has an active training plan
+ */
+async function hasActivePlan(userId: number): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT id FROM training_plans WHERE user_id = $1 AND is_active = true LIMIT 1`,
+    [userId]
+  );
+  return result.rows.length > 0;
+}
+
+/**
  * Convert HR (bpm) to zone number using custom zones
  */
 function hrToZone(hr: number, zones: HRZones): number {
@@ -109,6 +138,8 @@ export async function computeDailyInsight(
     // Fetch user's custom HR zones and coach style
     const hrZones = await getUserHRZones(userId);
     const coachStyle = await getUserCoachStyle(userId);
+    const runnerType = await getUserRunnerType(userId);
+    const userHasPlan = await hasActivePlan(userId);
 
     // 1. Analyze pacing from splits
     // NOTE: Strava API typically does not provide per-km splits, so this will use aggregate data
@@ -126,21 +157,61 @@ export async function computeDailyInsight(
       pacingAnalysis.consistency
     );
 
-    // 4. Check compliance with plan (passing actual HR zone for comparison)
-    const complianceCheck = checkCompliance(activityData, plannedWorkout, hrBehavior.avgZone);
-
-    // 5. Assess risk indicators
+    // 4. Assess risk indicators (always needed)
     const riskIndicators = assessRisks(activityData, hrBehavior, pacingAnalysis);
 
-    // 6. Generate coaching points (personality-adjusted)
-    const coachingPoints = generateCoachingPoints(
-      pacingAnalysis,
-      hrBehavior,
-      effortAnalysis,
-      complianceCheck,
-      riskIndicators,
-      coachStyle
-    );
+    let complianceCheck: DailyRunInsight['compliance'];
+    let coachingPoints: DailyRunInsight['coachingPoints'];
+
+    // Branch based on whether user has a plan or not
+    if (plannedWorkout) {
+      // 5a. Check compliance with plan (passing actual HR zone for comparison)
+      complianceCheck = checkCompliance(activityData, plannedWorkout, hrBehavior.avgZone);
+
+      // 6a. Generate coaching points (personality-adjusted, plan-based)
+      coachingPoints = generateCoachingPoints(
+        pacingAnalysis,
+        hrBehavior,
+        effortAnalysis,
+        complianceCheck,
+        riskIndicators,
+        coachStyle
+      );
+    } else if (!userHasPlan) {
+      // 5b. For plan-less users, compare against baseline
+      const baseline = await get4WeekRollingBaseline(userId);
+      const activityDistanceKm = (activityData.distance || 0) / 1000;
+
+      console.log(`📊 Plan-less user insight: Using baseline comparison`);
+      console.log(`   Baseline avg weekly: ${baseline?.avgDistanceKm || 'N/A'} km`);
+      console.log(`   This activity: ${activityDistanceKm.toFixed(1)} km`);
+      console.log(`   Runner type: ${runnerType || 'unset'}`);
+
+      complianceCheck = generateBaselineComparison(activityData, baseline);
+
+      // 6b. Generate baseline-aware coaching points
+      coachingPoints = generateBaselineCoachingPoints(
+        pacingAnalysis,
+        hrBehavior,
+        effortAnalysis,
+        baseline,
+        activityDistanceKm,
+        runnerType,
+        coachStyle
+      );
+    } else {
+      // User has plan but this activity doesn't match a planned workout
+      complianceCheck = checkCompliance(activityData, undefined, hrBehavior.avgZone);
+
+      coachingPoints = generateCoachingPoints(
+        pacingAnalysis,
+        hrBehavior,
+        effortAnalysis,
+        complianceCheck,
+        riskIndicators,
+        coachStyle
+      );
+    }
 
     const insight: DailyRunInsight = {
       activityId,
@@ -521,6 +592,222 @@ function assessRisks(
     injuryRisk,
     overtrainingSignals: signals,
     recoveryNeeded
+  };
+}
+
+/**
+ * Baseline-Aware Coaching Messages
+ * Used for plan-less users to compare against their rolling average
+ */
+const BASELINE_MESSAGES = {
+  aboveBaseline: {
+    strict: (percent: string) => `${percent}% above your typical run. Don't let occasional big runs replace consistent training.`,
+    supportive: (percent: string) => `Nice push! This run was ${percent}% longer than your typical distance. Great effort!`,
+    analytical: (percent: string) => `Run distance ${percent}% above 4-week baseline. This indicates progressive overload if within safe limits.`,
+    motivational: (percent: string) => `You went ${percent}% further than your average - that's how you level up!`
+  },
+  belowBaseline: {
+    strict: (percent: string) => `This run was ${percent}% below your typical distance. Maintain your baseline at minimum.`,
+    supportive: (percent: string) => `A shorter run today at ${percent}% below your average - sometimes easy days are needed!`,
+    analytical: (percent: string) => `Run distance ${percent}% below baseline. This is acceptable for recovery; monitor if pattern continues.`,
+    motivational: (percent: string) => `An easier day at ${percent}% less than usual - your body might be thanking you for the recovery!`
+  },
+  atBaseline: {
+    strict: 'Consistent with your baseline. This is the minimum standard.',
+    supportive: 'Right on target with your typical training! Consistency is key.',
+    analytical: 'Run within 10% of 4-week baseline. Training load consistent with established patterns.',
+    motivational: 'Nailed your usual distance! Consistency like this builds lasting fitness!'
+  },
+  goodVolumeWeek: {
+    strict: (percent: string) => `This week you're at ${percent}% of your baseline volume. Stay on track.`,
+    supportive: (percent: string) => `You're at ${percent}% of your usual weekly volume - great progress!`,
+    analytical: (percent: string) => `Weekly accumulation at ${percent}% of baseline. On track for maintenance.`,
+    motivational: (percent: string) => `Already at ${percent}% of your weekly goal - you're crushing it!`
+  },
+  lowVolumeWeek: {
+    strict: (percent: string) => `Only ${percent}% of your weekly baseline so far. You're behind.`,
+    supportive: (percent: string) => `You're at ${percent}% of your usual week so far - still time to catch up!`,
+    analytical: (percent: string) => `Weekly volume at ${percent}% of baseline. Consider additional sessions if available.`,
+    motivational: (percent: string) => `${percent}% of your weekly volume down - plenty of opportunity to add more!`
+  },
+  volumeTrendUp: {
+    strict: 'Volume trending up. Don\'t increase more than 10% weekly.',
+    supportive: 'Your mileage is trending up - exciting progress! Just be mindful of recovery.',
+    analytical: 'Positive volume trend detected. Recommend monitoring for overuse signals.',
+    motivational: 'Your training is building! Keep this momentum going!'
+  },
+  volumeTrendDown: {
+    strict: 'Volume trending down. Reverse this immediately unless injured.',
+    supportive: 'Your volume has dipped a bit lately - let\'s work on rebuilding that consistency.',
+    analytical: 'Negative volume trend observed. Assess barriers to training frequency.',
+    motivational: 'Time to reignite that running spark! Your baseline is waiting for you.'
+  },
+  maintainerEncouragement: {
+    strict: 'You showed up. That\'s the job done.',
+    supportive: 'Another run in the books! You\'re doing exactly what you need for your health.',
+    analytical: 'Cardiovascular maintenance stimulus delivered. Health benefits accruing.',
+    motivational: 'Every run counts! You\'re investing in a healthier, happier you!'
+  },
+  builderProgress: {
+    strict: 'Progress requires consistency. Keep adding to your baseline.',
+    supportive: 'You\'re building something special! Each run adds to your foundation.',
+    analytical: 'Progressive adaptation in process. Maintain gradual load increases.',
+    motivational: 'Watch yourself grow stronger with every single run! You\'re building an incredible base!'
+  }
+};
+
+/**
+ * Generate baseline-aware compliance data for plan-less users
+ */
+function generateBaselineComparison(
+  activityData: any,
+  baseline: RollingBaseline | null
+): DailyRunInsight['compliance'] {
+  if (!baseline) {
+    return {
+      hadPlannedWorkout: false,
+      completedAsPlanned: false,
+      distanceDeviation: 0,
+      paceDeviation: 0,
+      hrZoneDeviation: 0,
+      modifications: []
+    };
+  }
+
+  const activityDistanceKm = (activityData.distance || 0) / 1000;
+  const avgRunDistanceKm = baseline.avgDistanceKm / baseline.avgRunsPerWeek;
+
+  // Calculate deviation from typical run distance
+  const distanceDeviation = avgRunDistanceKm > 0
+    ? ((activityDistanceKm - avgRunDistanceKm) / avgRunDistanceKm) * 100
+    : 0;
+
+  // Calculate pace deviation if we have baseline pace
+  const actualPace = activityData.average_speed ? speedToPace(activityData.average_speed) : 0;
+  const paceDeviation = baseline.avgPaceMinKm > 0 && actualPace > 0
+    ? ((actualPace - baseline.avgPaceMinKm) / baseline.avgPaceMinKm) * 100
+    : 0;
+
+  // For baseline comparison, "completedAsPlanned" means within reasonable variance
+  const completedAsPlanned = Math.abs(distanceDeviation) <= 20;
+
+  const modifications: string[] = [];
+  if (distanceDeviation > 20) {
+    modifications.push(`${Math.round(distanceDeviation)}% longer than typical`);
+  } else if (distanceDeviation < -20) {
+    modifications.push(`${Math.round(Math.abs(distanceDeviation))}% shorter than typical`);
+  }
+
+  return {
+    hadPlannedWorkout: false,
+    completedAsPlanned,
+    distanceDeviation: Math.round(distanceDeviation * 10) / 10,
+    paceDeviation: Math.round(paceDeviation * 10) / 10,
+    hrZoneDeviation: 0,
+    modifications
+  };
+}
+
+/**
+ * Generate coaching points for plan-less users based on baseline comparison
+ */
+function generateBaselineCoachingPoints(
+  pacing: DailyRunInsight['pacing'],
+  hrBehavior: DailyRunInsight['hrBehavior'],
+  effort: DailyRunInsight['effort'],
+  baseline: RollingBaseline | null,
+  activityDistanceKm: number,
+  runnerType: RunnerType | null,
+  coachStyle: CoachStyle = 'supportive'
+): DailyRunInsight['coachingPoints'] {
+  const strengths: string[] = [];
+  const improvements: string[] = [];
+  let nextWorkoutAdjustment: string | undefined;
+
+  const msg = BASELINE_MESSAGES;
+
+  if (!baseline) {
+    // No baseline yet - encourage consistency
+    strengths.push('Building your training history! A few more weeks and we can track trends.');
+    return { strengths, improvements, nextWorkoutAdjustment };
+  }
+
+  const avgRunDistanceKm = baseline.avgDistanceKm / Math.max(baseline.avgRunsPerWeek, 1);
+  const distanceVsBaseline = avgRunDistanceKm > 0
+    ? ((activityDistanceKm - avgRunDistanceKm) / avgRunDistanceKm) * 100
+    : 0;
+
+  // Distance comparison to baseline
+  if (Math.abs(distanceVsBaseline) <= 10) {
+    strengths.push(msg.atBaseline[coachStyle]);
+  } else if (distanceVsBaseline > 10) {
+    const percent = Math.round(distanceVsBaseline).toString();
+    strengths.push(msg.aboveBaseline[coachStyle](percent));
+    if (distanceVsBaseline > 30) {
+      improvements.push('Large jumps in distance increase injury risk. Progress gradually.');
+    }
+  } else if (distanceVsBaseline < -10) {
+    const percent = Math.round(Math.abs(distanceVsBaseline)).toString();
+    strengths.push(msg.belowBaseline[coachStyle](percent));
+  }
+
+  // Weekly volume tracking
+  if (baseline.percentOfBaseline >= 80) {
+    const percent = baseline.percentOfBaseline.toString();
+    strengths.push(msg.goodVolumeWeek[coachStyle](percent));
+  } else if (baseline.percentOfBaseline < 50) {
+    const percent = baseline.percentOfBaseline.toString();
+    improvements.push(msg.lowVolumeWeek[coachStyle](percent));
+  }
+
+  // Volume trend feedback
+  if (baseline.distanceTrend === 'increasing') {
+    strengths.push(msg.volumeTrendUp[coachStyle]);
+  } else if (baseline.distanceTrend === 'decreasing') {
+    improvements.push(msg.volumeTrendDown[coachStyle]);
+  }
+
+  // Runner type specific encouragement
+  if (runnerType === 'maintainer') {
+    strengths.push(msg.maintainerEncouragement[coachStyle]);
+  } else if (runnerType === 'builder') {
+    strengths.push(msg.builderProgress[coachStyle]);
+  }
+
+  // Pacing feedback (same as plan-based)
+  if (pacing.hasSplitsData) {
+    if (pacing.paceDelta > 0) {
+      const delta = Math.abs(pacing.paceDelta).toFixed(1);
+      strengths.push(PERSONALITY_MESSAGES.negativeSplit[coachStyle](delta));
+    }
+    if (pacing.consistency > 0.9) {
+      const score = (pacing.consistency * 100).toFixed(0);
+      strengths.push(PERSONALITY_MESSAGES.paceConsistency[coachStyle](score));
+    }
+    if (pacing.paceDelta < -5) {
+      const fadePercent = Math.abs(pacing.paceDelta).toFixed(1);
+      improvements.push(PERSONALITY_MESSAGES.paceFade[coachStyle](fadePercent));
+    }
+  }
+
+  // HR feedback (same as plan-based)
+  if (hrBehavior.hasData) {
+    if (hrBehavior.avgZone >= 1.8 && hrBehavior.avgZone <= 2.2 && effort.perceivedDifficulty === 'easy') {
+      strengths.push(PERSONALITY_MESSAGES.perfectZone2[coachStyle]);
+    }
+    if (hrBehavior.driftRate < 2 && hrBehavior.driftRate >= 0) {
+      strengths.push(PERSONALITY_MESSAGES.hrControl[coachStyle]);
+    }
+    if (hrBehavior.effortMismatch) {
+      improvements.push(PERSONALITY_MESSAGES.effortMismatch[coachStyle]);
+      nextWorkoutAdjustment = PERSONALITY_MESSAGES.hrAdjustment[coachStyle];
+    }
+  }
+
+  return {
+    strengths,
+    improvements,
+    nextWorkoutAdjustment
   };
 }
 

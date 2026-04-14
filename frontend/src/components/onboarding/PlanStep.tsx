@@ -2,7 +2,8 @@ import { useState, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { trainingPlanAPI } from '../../services/api';
 import toast from 'react-hot-toast';
-import { ChevronLeft, ChevronRight, Calendar, Upload, FileText, PlusCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar, Upload, FileText, PlusCircle, Sparkles } from 'lucide-react';
+import SmartPlanWizard from '../training/SmartPlanWizard';
 
 interface PlanStepProps {
   onComplete: () => void;
@@ -10,7 +11,7 @@ interface PlanStepProps {
   onBack: () => void;
 }
 
-type PlanOption = 'upload' | 'empty' | null;
+type PlanOption = 'smart' | 'upload' | 'empty' | null;
 
 export default function PlanStep({ onComplete, onSkip, onBack }: PlanStepProps) {
   const queryClient = useQueryClient();
@@ -37,7 +38,6 @@ export default function PlanStep({ onComplete, onSkip, onBack }: PlanStepProps) 
 
   const createEmptyMutation = useMutation({
     mutationFn: async () => {
-      // Create an empty training plan for 365 days
       const startDate = new Date();
       const endDate = new Date();
       endDate.setDate(endDate.getDate() + 365);
@@ -88,6 +88,17 @@ export default function PlanStep({ onComplete, onSkip, onBack }: PlanStepProps) 
 
   const isLoading = uploadMutation.isPending || createEmptyMutation.isPending;
 
+  // If smart wizard is selected, render it
+  if (selectedOption === 'smart') {
+    return (
+      <SmartPlanWizard
+        onComplete={onComplete}
+        onBack={() => setSelectedOption(null)}
+        compact
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -100,13 +111,36 @@ export default function PlanStep({ onComplete, onSkip, onBack }: PlanStepProps) 
             Create a training plan
           </h2>
           <p className="text-slate-600 dark:text-slate-400 text-sm">
-            Import an existing plan or start fresh.
+            Generate a smart plan, import one, or start fresh.
           </p>
         </div>
       </div>
 
       {/* Options */}
       <div className="space-y-3">
+        {/* Smart Plan option - NEW */}
+        <button
+          onClick={() => setSelectedOption('smart')}
+          className="w-full p-4 rounded-xl border-2 text-left transition-all border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-gradient-to-br from-purple-500 to-pink-500 text-white">
+              <Sparkles size={20} />
+            </div>
+            <div className="flex-1">
+              <div className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
+                Smart Plan Generator
+                <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full">
+                  Recommended
+                </span>
+              </div>
+              <div className="text-sm text-slate-500 dark:text-slate-400">
+                AI-powered plan adapted to your fitness level
+              </div>
+            </div>
+          </div>
+        </button>
+
         {/* Upload option */}
         <button
           onClick={() => setSelectedOption('upload')}

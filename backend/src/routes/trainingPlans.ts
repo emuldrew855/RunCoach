@@ -10,7 +10,11 @@ router.use(authenticateToken);
 // Training Plan Routes
 router.get('/plans', trainingPlanController.getPlans);
 router.get('/plans/active', trainingPlanController.getActivePlanController);
+router.get('/plans/smart-options', trainingPlanController.getSmartPlanOptions);
 router.post('/plans', trainingPlanController.createManualPlan);
+router.post('/plans/from-template', trainingPlanController.createFromTemplate);
+router.post('/plans/generate', trainingPlanController.generateSmartPlanController);
+router.post('/plans/preview', trainingPlanController.previewSmartPlanController);
 router.post('/plans/upload', uploadConfig.single('file'), trainingPlanController.uploadPlanFile);
 router.put('/plans/:id', trainingPlanController.updatePlanController);
 router.delete('/plans/:id', trainingPlanController.deletePlanController);

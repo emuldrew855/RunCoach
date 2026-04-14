@@ -7,8 +7,9 @@ import { getUpcomingWorkouts, getPlannedWorkoutsByDateRange } from '../models/Pl
 import { getHRZoneSummary } from '../models/ActivityHRZone';
 import { getRaceHistoryByUserId, getPersonalBests } from '../models/RaceHistory';
 import { retrieveRelevantMemories, type LongTermMemory } from '../services/memoryRetrievalService';
+import { get4WeekRollingBaseline, inferRunnerType, updateRunnerType } from '../services/baselineMetricsService';
 import { DailyRunInsight, WeeklyInsight, RunnerTendency } from '../types/insights';
-import { MarathonMetrics, TrainingContext, SegmentedTrainingHistory, PlanAdherence, LongRunProgression } from '../types/models';
+import { MarathonMetrics, TrainingContext, SegmentedTrainingHistory, PlanAdherence, LongRunProgression, RollingBaseline, RunnerType } from '../types/models';
 import pool from '../config/database';
 
 /**
@@ -161,6 +162,10 @@ export interface UserContextData {
   trainingHistory?: SegmentedTrainingHistory;
   planAdherence?: PlanAdherence;
   longRunProgression?: LongRunProgression;
+
+  // NEW: Runner Intent and Baseline Comparison (for plan-less coaching)
+  runnerType?: RunnerType;
+  baselineComparison?: RollingBaseline;
 }
 
 export async function buildUserContext(userId: number, userQuery?: string): Promise<UserContextData> {
@@ -231,6 +236,42 @@ export async function buildUserContext(userId: number, userQuery?: string): Prom
   // Fetch race history and personal bests
   const raceHistory = await getRaceHistoryByUserId(userId);
   const personalBests = await getPersonalBests(userId);
+
+  // NEW: Fetch runner type and baseline for plan-less coaching
+  let runnerType: RunnerType | undefined;
+  let baselineComparison: RollingBaseline | null = null;
+
+  // If no active plan, fetch baseline comparison for trend-based coaching
+  if (!activePlan) {
+    // Get stored runner type from profile, or infer it
+    if (profile?.runner_type) {
+      runnerType = profile.runner_type as RunnerType;
+    } else {
+      // Auto-infer runner type from activity data
+      runnerType = await inferRunnerType(userId);
+      // Optionally store the inferred type (don't await to keep it fast)
+      updateRunnerType(userId, runnerType, true).catch(err =>
+        console.warn('Failed to store inferred runner type:', err)
+      );
+    }
+
+    // Fetch 4-week rolling baseline for comparison
+    baselineComparison = await get4WeekRollingBaseline(userId);
+
+    console.log('\n--- BASELINE COACHING DATA ---');
+    console.log('Runner Type:', runnerType, profile?.runner_type ? '(from profile)' : '(inferred)');
+    console.log('Baseline Data:', baselineComparison ? {
+      avgDistanceKm: baselineComparison.avgDistanceKm,
+      avgRunsPerWeek: baselineComparison.avgRunsPerWeek,
+      thisWeekDistanceKm: baselineComparison.thisWeekDistanceKm,
+      percentOfBaseline: baselineComparison.percentOfBaseline,
+      distanceTrend: baselineComparison.distanceTrend,
+      paceTrend: baselineComparison.paceTrend,
+    } : 'No baseline data available');
+  } else if (profile?.runner_type) {
+    // Even with a plan, include runner type if set
+    runnerType = profile.runner_type as RunnerType;
+  }
 
   // Calculate this week's plan based on user's week start preference
   const weekStartsOn = profile?.week_starts_on || 'sunday';
@@ -544,6 +585,10 @@ export async function buildUserContext(userId: number, userQuery?: string): Prom
     // Race history and personal bests for context
     raceHistory,
     personalBests,
+
+    // NEW: Runner intent and baseline for plan-less coaching
+    runnerType,
+    baselineComparison: baselineComparison || undefined,
   };
 
   // Log the context being sent to the agent for debugging
@@ -1088,7 +1133,25 @@ ${userData.activePlan ? `# Active Training Plan
 - Duration: ${userData.activePlan.totalWeeks || 'N/A'} weeks
 - Progress: Week ${calculateCurrentWeek(userData.activePlan.startDate)} of ${userData.activePlan.totalWeeks || 'N/A'}
 - Start Date: ${formatDate(userData.activePlan.startDate)}
-- End Date: ${formatDate(userData.activePlan.endDate)}` : '# Active Training Plan\n- No active training plan'}
+- End Date: ${formatDate(userData.activePlan.endDate)}` : `# Training Status
+- No active training plan - using baseline trend coaching
+
+${userData.runnerType ? `## Runner Type: ${userData.runnerType.toUpperCase()}
+${userData.runnerType === 'architect' ? '- ARCHITECT: Training for a specific race with a time goal. Focus on goal-oriented progression.' : ''}${userData.runnerType === 'builder' ? '- BUILDER: Actively improving running fitness. Focus on gradual progression and consistency.' : ''}${userData.runnerType === 'maintainer' ? '- MAINTAINER: Running for health and fitness. Focus on consistency, enjoyment, and balance.' : ''}` : ''}
+
+${userData.baselineComparison ? `## 4-Week Rolling Baseline
+- Average Weekly Distance: ${userData.baselineComparison.avgDistanceKm.toFixed(1)} km
+- Average Runs Per Week: ${userData.baselineComparison.avgRunsPerWeek.toFixed(1)}
+- Average Longest Run: ${userData.baselineComparison.avgLongestRunKm.toFixed(1)} km
+- Average Pace: ${formatPace(userData.baselineComparison.avgPaceMinKm)} min/km
+
+## This Week vs Baseline
+- This Week: ${userData.baselineComparison.thisWeekDistanceKm.toFixed(1)} km (${userData.baselineComparison.thisWeekRuns} runs)
+- % of Baseline: ${userData.baselineComparison.percentOfBaseline}%
+- Volume Trend (4 weeks): ${userData.baselineComparison.distanceTrend}
+- Pace Trend (4 weeks): ${userData.baselineComparison.paceTrend}
+
+${userData.baselineComparison.percentOfBaseline < 80 ? '⚠️ Running below typical baseline this week' : userData.baselineComparison.percentOfBaseline > 120 ? '⚠️ Elevated volume this week - monitor for fatigue' : '✓ On track with typical training volume'}` : '- No baseline data yet - need more activity history'}`}
 
 ${userData.thisWeekPlan ? `# This Week's Plan
 - Total Planned Distance: ${userData.thisWeekPlan.totalPlannedDistance.toFixed(1)} km
@@ -1156,6 +1219,28 @@ ${userData.recentActivities && userData.recentActivities.length > 0
 
 # Your Role as AI Running Coach
 You are an expert running coach who provides:
+
+${!userData.activePlan && userData.runnerType ? `**IMPORTANT: Plan-Less Coaching Mode**
+This athlete doesn't have a structured training plan. Adapt your coaching based on their runner type:
+
+${userData.runnerType === 'architect' ? `- **ARCHITECT Mode**: They have a race goal. Help them progress toward it by:
+  - Suggesting appropriate weekly mileage increases (max 10% per week)
+  - Recommending key workouts (long runs, tempo, intervals) based on their goal
+  - Monitoring if they're on track for their target time
+  - Encouraging them to create a structured plan when appropriate` : ''}${userData.runnerType === 'builder' ? `- **BUILDER Mode**: They want to improve. Help them by:
+  - Celebrating volume/pace improvements vs their baseline
+  - Suggesting gradual progression (consistency over heroics)
+  - Recommending workout variety when they're ready
+  - Monitoring for overtraining signs (sustained volume increases >10%)` : ''}${userData.runnerType === 'maintainer' ? `- **MAINTAINER Mode**: They run for fitness. Help them by:
+  - Focus on consistency and enjoyment, not PRs
+  - Validate their current effort as sufficient for health goals
+  - Don't push for increases unless they ask
+  - Celebrate consistency streaks and regular activity
+  - Flag if volume drops significantly below baseline (might indicate issues)` : ''}
+
+Use their 4-week baseline as the reference point, NOT arbitrary training plan standards.
+
+` : ''}
 
 **Training Plan Analysis:**
 - Analyze this week's planned workouts in context of the overall goal

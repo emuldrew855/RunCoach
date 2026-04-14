@@ -211,7 +211,7 @@ export const WorkoutCalendar: React.FC = () => {
   const events: WorkoutEvent[] = useMemo(() => {
     const plannedEvents = workouts.map((workout) => {
       const distance = workout.target_distance_meters
-        ? `${convertDistance(parseFloat(workout.target_distance_meters))}${distanceUnit}`
+        ? `${convertDistance(parseFloat(workout.target_distance_meters) || 0)}${distanceUnit}`
         : '';
       const name = workout.name || workout.workout_type.replace('_', ' ');
       const execScore = executionScores.get(workout.id);
@@ -320,7 +320,7 @@ export const WorkoutCalendar: React.FC = () => {
     );
 
     const weeklyPlannedDistance = weeklyWorkouts.reduce(
-      (sum, w) => sum + parseFloat(w.target_distance_meters),
+      (sum, w) => sum + (parseFloat(w.target_distance_meters) || 0),
       0
     ) / 1000;
 
@@ -413,7 +413,7 @@ export const WorkoutCalendar: React.FC = () => {
       if (!weeks[weekKey]) {
         weeks[weekKey] = 0;
       }
-      const distance = parseFloat(workout.target_distance_meters);
+      const distance = parseFloat(workout.target_distance_meters) || 0;
       weeks[weekKey] += distance / 1000;
     });
 
@@ -1811,11 +1811,11 @@ export const WorkoutCalendar: React.FC = () => {
 
                 {/* Main Workout Details */}
                 <div className="grid grid-cols-2 gap-4">
-                  {selectedWorkout.target_distance_meters && (
+                  {selectedWorkout.target_distance_meters && !isNaN(selectedWorkout.target_distance_meters) && selectedWorkout.target_distance_meters > 0 && (
                     <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-4">
                       <p className="text-sm text-slate-600 dark:text-slate-400 mb-1">Target Distance</p>
                       <p className="text-2xl font-bold text-slate-900 dark:text-white">
-                        {convertDistance(selectedWorkout.target_distance_meters)}
+                        {convertDistance(selectedWorkout.target_distance_meters || 0)}
                       </p>
                       <p className="text-xs text-slate-600 dark:text-slate-400">{distanceUnit}</p>
                     </div>

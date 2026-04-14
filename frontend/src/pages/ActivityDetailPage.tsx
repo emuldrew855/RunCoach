@@ -413,8 +413,8 @@ export default function ActivityDetailPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Pacing */}
-            {insights?.pacing && (
+            {/* Pacing - only show if we have splits data */}
+            {insights?.pacing?.hasSplitsData && (
               <PacingAnalysisCard
                 paceDelta={insights.pacing.paceDelta || 0}
                 consistency={insights.pacing.consistency || 0}
@@ -425,8 +425,8 @@ export default function ActivityDetailPage() {
               />
             )}
 
-            {/* HR Analysis */}
-            {insights?.hrBehavior && (
+            {/* HR Analysis - only show if we have HR data */}
+            {insights?.hrBehavior?.hasData && (
               <HRAnalysisCard
                 avgZone={insights.hrBehavior.avgZone || 2}
                 zoneDrift={insights.hrBehavior.zoneDrift || 0}
@@ -438,8 +438,8 @@ export default function ActivityDetailPage() {
             )}
           </div>
 
-          {/* HR Zone Distribution Chart */}
-          {hrZoneData && !hrZoneLoading && (
+          {/* HR Zone Distribution Chart - only show if we have HR data */}
+          {hrZoneData && !hrZoneLoading && insights?.hrBehavior?.hasData && (
             <div className="card">
               <div className="mb-4">
                 <h3 className="text-lg font-bold text-neutral-900 dark:text-neutral-100 flex items-center gap-2">
@@ -457,8 +457,8 @@ export default function ActivityDetailPage() {
             </div>
           )}
 
-          {/* Show loading state for HR Zone chart */}
-          {hrZoneLoading && (
+          {/* Show loading state for HR Zone chart - only if we expect HR data */}
+          {hrZoneLoading && insights?.hrBehavior?.hasData && (
             <div className="card">
               <div className="flex items-center justify-center py-8">
                 <div className="text-center">
@@ -475,7 +475,7 @@ export default function ActivityDetailPage() {
             improvements={insights?.coachingPoints?.improvements ?? []}
             nextWorkoutAdjustment={insights?.coachingPoints?.nextWorkoutAdjustment}
             risks={insights?.risks}
-            hasHRData={insights?.hrBehavior?.hasData ?? (activity.average_heartrate != null && activity.average_heartrate > 0)}
+            hasHRData={insights?.hrBehavior?.hasData ?? false}
             hasSplitsData={insights?.pacing?.hasSplitsData ?? false}
             hadPlannedWorkout={insights?.compliance?.hadPlannedWorkout ?? false}
             onDiscussClick={() => setShowChat(true)}
