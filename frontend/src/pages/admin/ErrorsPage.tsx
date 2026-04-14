@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { adminAPI } from '../../services/adminApi';
 import AdminLayout from '../../components/admin/AdminLayout';
+import AdminErrorState from '../../components/admin/AdminErrorState';
 import { AlertTriangle } from 'lucide-react';
 
 interface ErrorEntry {
@@ -23,6 +24,7 @@ interface ErrorEntry {
 export default function ErrorsPage() {
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedError, setExpandedError] = useState<number | null>(null);
 
   useEffect(() => {
@@ -32,11 +34,14 @@ export default function ErrorsPage() {
   async function loadErrors() {
     try {
       setLoading(true);
+      setLoadError(null);
       const response = await adminAPI.getRecentErrors(50);
       const errorsData = response.data.data.errors;
       setErrors(Array.isArray(errorsData) ? errorsData : []);
-    } catch (error) {
-      console.error('Failed to load errors:', error);
+    } catch (err) {
+      console.error('Failed to load errors:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      setLoadError(errorMessage);
       setErrors([]);
     } finally {
       setLoading(false);
@@ -49,6 +54,19 @@ export default function ErrorsPage() {
         <div className="flex items-center justify-center h-64">
           <div className="text-gray-500 dark:text-gray-400">Loading errors...</div>
         </div>
+      </AdminLayout>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <AdminLayout>
+        <AdminErrorState
+          title="Failed to load error logs"
+          message={loadError}
+          onRetry={loadErrors}
+          retrying={loading}
+        />
       </AdminLayout>
     );
   }

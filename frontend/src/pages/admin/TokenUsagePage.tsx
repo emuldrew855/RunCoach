@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { Zap, DollarSign, TrendingUp, Users, Activity } from 'lucide-react';
 import { adminAPI } from '../../services/adminApi';
 import AdminLayout from '../../components/admin/AdminLayout';
+import AdminErrorState from '../../components/admin/AdminErrorState';
 import {
   LineChart,
   Line,
@@ -72,6 +73,7 @@ export default function TokenUsagePage() {
   const [usageByModel, setUsageByModel] = useState<TokenUsageByModel[]>([]);
   const [topUsers, setTopUsers] = useState<TopUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState(30);
 
   useEffect(() => {
@@ -81,6 +83,7 @@ export default function TokenUsagePage() {
   async function loadTokenUsageData() {
     try {
       setLoading(true);
+      setError(null);
       const [summaryRes, byDateRes, byModelRes, topUsersRes] = await Promise.all([
         adminAPI.getTokenUsageSummary(),
         adminAPI.getTokenUsageByDate(days),
@@ -92,8 +95,10 @@ export default function TokenUsagePage() {
       setUsageByDate(byDateRes.data.data.usage || []);
       setUsageByModel(byModelRes.data.data.usage || []);
       setTopUsers(topUsersRes.data.data.users || []);
-    } catch (error) {
-      console.error('Failed to load token usage data:', error);
+    } catch (err) {
+      console.error('Failed to load token usage data:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      setError(errorMessage);
       setSummary(null);
     } finally {
       setLoading(false);
@@ -110,10 +115,15 @@ export default function TokenUsagePage() {
     );
   }
 
-  if (!summary) {
+  if (error || !summary) {
     return (
       <AdminLayout>
-        <div className="text-red-600">Failed to load token usage data</div>
+        <AdminErrorState
+          title="Failed to load token usage data"
+          message={error || 'Unable to retrieve token usage analytics. Please try again.'}
+          onRetry={loadTokenUsageData}
+          retrying={loading}
+        />
       </AdminLayout>
     );
   }

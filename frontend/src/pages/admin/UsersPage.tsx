@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { Search, Eye, LogIn, Shield, ShieldOff } from 'lucide-react';
 import { adminAPI } from '../../services/adminApi';
 import AdminLayout from '../../components/admin/AdminLayout';
+import AdminErrorState from '../../components/admin/AdminErrorState';
 
 interface User {
   id: number;
@@ -28,6 +29,7 @@ export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortField, setSortField] = useState<keyof User>('created_at');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -43,11 +45,14 @@ export default function UsersPage() {
   async function loadUsers() {
     try {
       setLoading(true);
+      setError(null);
       const response = await adminAPI.getAllUsers();
       const usersData = response.data.data.users;
       setUsers(Array.isArray(usersData) ? usersData : []);
-    } catch (error) {
-      console.error('Failed to load users:', error);
+    } catch (err) {
+      console.error('Failed to load users:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      setError(errorMessage);
       setUsers([]);
     } finally {
       setLoading(false);
@@ -126,6 +131,19 @@ export default function UsersPage() {
         <div className="flex items-center justify-center h-64">
           <div className="text-gray-500 dark:text-gray-400">Loading users...</div>
         </div>
+      </AdminLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <AdminLayout>
+        <AdminErrorState
+          title="Failed to load users"
+          message={error}
+          onRetry={loadUsers}
+          retrying={loading}
+        />
       </AdminLayout>
     );
   }

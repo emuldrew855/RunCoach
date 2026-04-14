@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { Users, Activity, MessageSquare, AlertTriangle, TrendingUp, Clock, DollarSign, Zap } from 'lucide-react';
 import { adminAPI } from '../../services/adminApi';
 import AdminLayout from '../../components/admin/AdminLayout';
+import AdminErrorState from '../../components/admin/AdminErrorState';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface SystemAnalytics {
@@ -41,6 +42,7 @@ export default function AdminDashboard() {
   const [engagementData, setEngagementData] = useState<MetricDataPoint[]>([]);
   const [tokenUsage, setTokenUsage] = useState<TokenUsageSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadDashboardData();
@@ -49,6 +51,7 @@ export default function AdminDashboard() {
   async function loadDashboardData() {
     try {
       setLoading(true);
+      setError(null);
       const [analyticsRes, growthRes, engagementRes, tokenUsageRes] = await Promise.all([
         adminAPI.getSystemAnalytics(),
         adminAPI.getGrowthMetrics(30),
@@ -60,8 +63,10 @@ export default function AdminDashboard() {
       setGrowthData(growthRes.data.data || []);
       setEngagementData(engagementRes.data.data || []);
       setTokenUsage(tokenUsageRes.data.data.summary || null);
-    } catch (error) {
-      console.error('Failed to load dashboard data:', error);
+    } catch (err) {
+      console.error('Failed to load dashboard data:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      setError(errorMessage);
       setAnalytics(null);
       setTokenUsage(null);
     } finally {
@@ -79,10 +84,15 @@ export default function AdminDashboard() {
     );
   }
 
-  if (!analytics) {
+  if (error || !analytics) {
     return (
       <AdminLayout>
-        <div className="text-red-600">Failed to load analytics</div>
+        <AdminErrorState
+          title="Failed to load analytics"
+          message={error || 'Unable to retrieve system analytics. Please try again.'}
+          onRetry={loadDashboardData}
+          retrying={loading}
+        />
       </AdminLayout>
     );
   }
@@ -156,28 +166,28 @@ export default function AdminDashboard() {
               <StatCard
                 icon={<Zap className="w-6 h-6" />}
                 label="Tokens (24h)"
-                value={(tokenUsage.tokens_24h || 0).toLocaleString()}
-                subtext={`$${(tokenUsage.cost_24h_usd || 0).toFixed(2)} cost`}
+                value={Number(tokenUsage.tokens_24h || 0).toLocaleString()}
+                subtext={`$${Number(tokenUsage.cost_24h_usd || 0).toFixed(2)} cost`}
                 color="blue"
               />
               <StatCard
                 icon={<Zap className="w-6 h-6" />}
                 label="Tokens (7d)"
-                value={(tokenUsage.tokens_7d || 0).toLocaleString()}
-                subtext={`$${(tokenUsage.cost_7d_usd || 0).toFixed(2)} cost`}
+                value={Number(tokenUsage.tokens_7d || 0).toLocaleString()}
+                subtext={`$${Number(tokenUsage.cost_7d_usd || 0).toFixed(2)} cost`}
                 color="green"
               />
               <StatCard
                 icon={<Zap className="w-6 h-6" />}
                 label="Tokens (30d)"
-                value={(tokenUsage.tokens_30d || 0).toLocaleString()}
-                subtext={`$${(tokenUsage.cost_30d_usd || 0).toFixed(2)} cost`}
+                value={Number(tokenUsage.tokens_30d || 0).toLocaleString()}
+                subtext={`$${Number(tokenUsage.cost_30d_usd || 0).toFixed(2)} cost`}
                 color="purple"
               />
               <StatCard
                 icon={<DollarSign className="w-6 h-6" />}
                 label="Total Cost"
-                value={`$${(tokenUsage.total_cost_usd || 0).toFixed(2)}`}
+                value={`$${Number(tokenUsage.total_cost_usd || 0).toFixed(2)}`}
                 subtext="All-time spending"
                 color="blue"
               />

@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { adminAPI } from '../../services/adminApi';
 import AdminLayout from '../../components/admin/AdminLayout';
+import AdminErrorState from '../../components/admin/AdminErrorState';
 import { FileText, Shield, Eye, UserCheck, LogIn } from 'lucide-react';
 
 interface AuditLogEntry {
@@ -24,6 +25,7 @@ interface AuditLogEntry {
 export default function AuditLogsPage() {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadAuditLogs();
@@ -32,11 +34,14 @@ export default function AuditLogsPage() {
   async function loadAuditLogs() {
     try {
       setLoading(true);
+      setError(null);
       const response = await adminAPI.getAuditLogs({ limit: 100 });
       const logsData = response.data.data.logs;
       setAuditLogs(Array.isArray(logsData) ? logsData : []);
-    } catch (error) {
-      console.error('Failed to load audit logs:', error);
+    } catch (err) {
+      console.error('Failed to load audit logs:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      setError(errorMessage);
       setAuditLogs([]);
     } finally {
       setLoading(false);
@@ -81,6 +86,19 @@ export default function AuditLogsPage() {
         <div className="flex items-center justify-center h-64">
           <div className="text-gray-500 dark:text-gray-400">Loading audit logs...</div>
         </div>
+      </AdminLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <AdminLayout>
+        <AdminErrorState
+          title="Failed to load audit logs"
+          message={error}
+          onRetry={loadAuditLogs}
+          retrying={loading}
+        />
       </AdminLayout>
     );
   }

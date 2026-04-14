@@ -90,17 +90,41 @@ export async function trackTokenUsage(
 }
 
 /**
+ * Helper to convert PostgreSQL numeric strings to JavaScript numbers
+ */
+function parseNumericFields<T extends Record<string, any>>(row: T, fields: string[]): T {
+  if (!row) return row;
+  const parsed = { ...row } as Record<string, any>;
+  for (const field of fields) {
+    if (parsed[field] !== undefined && parsed[field] !== null) {
+      parsed[field] = Number(parsed[field]);
+    }
+  }
+  return parsed as T;
+}
+
+/**
  * Get token usage summary
  */
 export async function getTokenUsageSummary() {
   const result = await query('SELECT * FROM token_usage_summary');
-  return result.rows[0];
+  if (!result.rows[0]) return null;
+
+  // Convert numeric fields from PostgreSQL strings to JavaScript numbers
+  return parseNumericFields(result.rows[0], [
+    'total_tokens', 'tokens_24h', 'tokens_7d', 'tokens_30d',
+    'cost_24h_usd', 'cost_7d_usd', 'cost_30d_usd', 'total_cost_usd',
+    'total_requests', 'avg_tokens_per_request'
+  ]);
 }
 
 /**
  * Get token usage by date range (for charts)
  */
 export async function getTokenUsageByDate(days: number = 30) {
+  // Sanitize days parameter to prevent SQL injection
+  const safeDays = Math.max(1, Math.min(Math.floor(Number(days) || 30), 365));
+
   const result = await query(
     `SELECT
        DATE(created_at) as date,
@@ -108,17 +132,25 @@ export async function getTokenUsageByDate(days: number = 30) {
        SUM(estimated_cost_cents) / 100.0 as cost_usd,
        COUNT(*) as request_count
      FROM token_usage
-     WHERE created_at > NOW() - INTERVAL '${days} days'
+     WHERE created_at > NOW() - INTERVAL '1 day' * $1
      GROUP BY DATE(created_at)
-     ORDER BY date ASC`
+     ORDER BY date ASC`,
+    [safeDays]
   );
-  return result.rows;
+
+  // Convert numeric fields
+  return result.rows.map(row => parseNumericFields(row, [
+    'total_tokens', 'cost_usd', 'request_count'
+  ]));
 }
 
 /**
  * Get token usage by model (for breakdown)
  */
 export async function getTokenUsageByModel(days: number = 30) {
+  // Sanitize days parameter to prevent SQL injection
+  const safeDays = Math.max(1, Math.min(Math.floor(Number(days) || 30), 365));
+
   const result = await query(
     `SELECT
        model,
@@ -127,22 +159,34 @@ export async function getTokenUsageByModel(days: number = 30) {
        COUNT(*) as request_count,
        AVG(total_tokens) as avg_tokens_per_request
      FROM token_usage
-     WHERE created_at > NOW() - INTERVAL '${days} days'
+     WHERE created_at > NOW() - INTERVAL '1 day' * $1
      GROUP BY model
-     ORDER BY total_tokens DESC`
+     ORDER BY total_tokens DESC`,
+    [safeDays]
   );
-  return result.rows;
+
+  // Convert numeric fields
+  return result.rows.map(row => parseNumericFields(row, [
+    'total_tokens', 'cost_usd', 'request_count', 'avg_tokens_per_request'
+  ]));
 }
 
 /**
  * Get top users by token usage (for admin monitoring)
  */
 export async function getTopUsersByTokenUsage(limit: number = 10) {
+  // Sanitize limit parameter
+  const safeLimit = Math.max(1, Math.min(Math.floor(Number(limit) || 10), 100));
+
   const result = await query(
     `SELECT * FROM user_token_usage
      ORDER BY tokens_30d DESC
      LIMIT $1`,
-    [limit]
+    [safeLimit]
   );
-  return result.rows;
+
+  // Convert numeric fields
+  return result.rows.map(row => parseNumericFields(row, [
+    'total_tokens', 'tokens_30d', 'total_cost_usd', 'cost_30d_usd', 'total_requests'
+  ]));
 }

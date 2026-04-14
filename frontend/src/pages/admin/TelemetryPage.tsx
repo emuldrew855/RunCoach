@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { adminAPI } from '../../services/adminApi';
 import AdminLayout from '../../components/admin/AdminLayout';
+import AdminErrorState from '../../components/admin/AdminErrorState';
 import { Activity, Clock, AlertCircle } from 'lucide-react';
 
 interface TelemetryEntry {
@@ -22,6 +23,7 @@ interface TelemetryEntry {
 export default function TelemetryPage() {
   const [telemetry, setTelemetry] = useState<TelemetryEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'errors'>('all');
 
   useEffect(() => {
@@ -31,14 +33,17 @@ export default function TelemetryPage() {
   async function loadTelemetry() {
     try {
       setLoading(true);
+      setError(null);
       const response = await adminAPI.getAPITelemetry({
         limit: 100,
         errorsOnly: filter === 'errors',
       });
       const telemetryData = response.data.data.telemetry;
       setTelemetry(Array.isArray(telemetryData) ? telemetryData : []);
-    } catch (error) {
-      console.error('Failed to load telemetry:', error);
+    } catch (err) {
+      console.error('Failed to load telemetry:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      setError(errorMessage);
       setTelemetry([]);
     } finally {
       setLoading(false);
@@ -68,6 +73,19 @@ export default function TelemetryPage() {
         <div className="flex items-center justify-center h-64">
           <div className="text-gray-500 dark:text-gray-400">Loading telemetry...</div>
         </div>
+      </AdminLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <AdminLayout>
+        <AdminErrorState
+          title="Failed to load telemetry"
+          message={error}
+          onRetry={loadTelemetry}
+          retrying={loading}
+        />
       </AdminLayout>
     );
   }

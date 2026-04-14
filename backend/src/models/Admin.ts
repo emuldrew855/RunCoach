@@ -87,7 +87,14 @@ export async function isAdmin(userId: number): Promise<boolean> {
  */
 export async function getSystemAnalytics(): Promise<SystemAnalytics> {
   const result = await query('SELECT * FROM system_analytics');
-  return result.rows[0];
+  if (!result.rows[0]) return result.rows[0];
+
+  return parseNumericFields(result.rows[0], [
+    'total_users', 'new_users_7d', 'new_users_30d', 'active_users_24h',
+    'active_users_7d', 'sessions_24h', 'avg_session_duration_7d',
+    'activities_synced_7d', 'chat_messages_7d', 'pending_actions_count',
+    'api_calls_24h', 'avg_response_time_24h', 'api_errors_24h'
+  ]);
 }
 
 /**
@@ -104,7 +111,13 @@ export async function getAllUsersWithAnalytics(
     [limit, offset]
   );
 
-  return result.rows;
+  const numericFields = [
+    'id', 'total_sessions', 'avg_session_duration_seconds',
+    'total_page_views', 'total_api_calls', 'total_activities',
+    'total_chat_messages', 'pending_actions_count'
+  ];
+
+  return result.rows.map(row => parseNumericFields(row, numericFields));
 }
 
 /**
@@ -116,7 +129,15 @@ export async function getUserAnalytics(userId: number): Promise<UserAnalytics | 
     [userId]
   );
 
-  return result.rows.length > 0 ? result.rows[0] : null;
+  if (result.rows.length === 0) return null;
+
+  const numericFields = [
+    'id', 'total_sessions', 'avg_session_duration_seconds',
+    'total_page_views', 'total_api_calls', 'total_activities',
+    'total_chat_messages', 'pending_actions_count'
+  ];
+
+  return parseNumericFields(result.rows[0], numericFields);
 }
 
 /**
@@ -133,7 +154,13 @@ export async function searchUsers(searchTerm: string): Promise<UserAnalytics[]> 
     [`%${searchTerm}%`]
   );
 
-  return result.rows;
+  const numericFields = [
+    'id', 'total_sessions', 'avg_session_duration_seconds',
+    'total_page_views', 'total_api_calls', 'total_activities',
+    'total_chat_messages', 'pending_actions_count'
+  ];
+
+  return result.rows.map(row => parseNumericFields(row, numericFields));
 }
 
 /**
@@ -258,7 +285,10 @@ export async function getRecentSessions(
   params.push(limit);
 
   const result = await query(sql, params);
-  return result.rows;
+
+  const numericFields = ['user_id', 'duration_seconds', 'page_views', 'api_calls'];
+
+  return result.rows.map(row => parseNumericFields(row, numericFields));
 }
 
 /**
@@ -295,7 +325,10 @@ export async function getAPITelemetry(
   params.push(limit);
 
   const result = await query(sql, params);
-  return result.rows;
+
+  const numericFields = ['status_code', 'avg_response_time', 'request_count', 'error_count'];
+
+  return result.rows.map(row => parseNumericFields(row, numericFields));
 }
 
 /**
@@ -311,7 +344,9 @@ export async function getRecentErrors(limit: number = 50): Promise<any[]> {
     [limit]
   );
 
-  return result.rows;
+  const numericFields = ['status_code', 'response_time_ms', 'user_id'];
+
+  return result.rows.map(row => parseNumericFields(row, numericFields));
 }
 
 /**
@@ -332,39 +367,62 @@ export async function setUserAdminStatus(
  * Get growth metrics (user signups over time)
  */
 export async function getGrowthMetrics(days: number = 30): Promise<any[]> {
+  // Sanitize days parameter to prevent SQL injection
+  const safeDays = Math.max(1, Math.min(Math.floor(Number(days) || 30), 365));
+
   const result = await query(
     `SELECT
        DATE(created_at) as date,
-       COUNT(*) as new_users
+       COUNT(*)::INTEGER as count
      FROM users
-     WHERE created_at > NOW() - INTERVAL '${days} days'
+     WHERE created_at > NOW() - INTERVAL '1 day' * $1
      GROUP BY DATE(created_at)
-     ORDER BY date ASC`
+     ORDER BY date ASC`,
+    [safeDays]
   );
 
-  return result.rows;
+  return result.rows.map(row => parseNumericFields(row, ['count']));
 }
 
 /**
  * Get engagement metrics (active users over time)
  */
 export async function getEngagementMetrics(days: number = 30): Promise<any[]> {
+  // Sanitize days parameter to prevent SQL injection
+  const safeDays = Math.max(1, Math.min(Math.floor(Number(days) || 30), 365));
+
   const result = await query(
     `SELECT
        DATE(started_at) as date,
-       COUNT(DISTINCT user_id) as active_users,
-       COUNT(*) as sessions,
-       AVG(duration_seconds)::INTEGER as avg_duration
+       COUNT(DISTINCT user_id)::INTEGER as count,
+       COUNT(*)::INTEGER as sessions,
+       COALESCE(AVG(duration_seconds)::INTEGER, 0) as avg_duration
      FROM user_sessions
-     WHERE started_at > NOW() - INTERVAL '${days} days'
+     WHERE started_at > NOW() - INTERVAL '1 day' * $1
      GROUP BY DATE(started_at)
-     ORDER BY date ASC`
+     ORDER BY date ASC`,
+    [safeDays]
   );
 
-  return result.rows;
+  return result.rows.map(row => parseNumericFields(row, ['count', 'sessions', 'avg_duration']));
 }
 
 // Helper functions
+
+/**
+ * Helper to convert PostgreSQL numeric strings to JavaScript numbers
+ */
+function parseNumericFields<T extends Record<string, any>>(row: T, fields: string[]): T {
+  if (!row) return row;
+  const parsed = { ...row } as Record<string, any>;
+  for (const field of fields) {
+    if (parsed[field] !== undefined && parsed[field] !== null) {
+      parsed[field] = Number(parsed[field]);
+    }
+  }
+  return parsed as T;
+}
+
 function generateRandomToken(length: number): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let result = '';

@@ -9,6 +9,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, LogIn, Activity, MessageSquare, Calendar, Clock } from 'lucide-react';
 import { adminAPI } from '../../services/adminApi';
 import AdminLayout from '../../components/admin/AdminLayout';
+import AdminErrorState from '../../components/admin/AdminErrorState';
 
 interface UserDetails {
   id: number;
@@ -33,6 +34,7 @@ export default function UserDetailPage() {
   const [searchParams] = useSearchParams();
   const [user, setUser] = useState<UserDetails | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [impersonating, setImpersonating] = useState(false);
   const [showReasonDialog, setShowReasonDialog] = useState(false);
   const [impersonationReason, setImpersonationReason] = useState('');
@@ -49,10 +51,13 @@ export default function UserDetailPage() {
   async function loadUserDetails() {
     try {
       setLoading(true);
+      setError(null);
       const response = await adminAPI.getUserDetails(parseInt(userId!));
       setUser(response.data.data);
-    } catch (error) {
-      console.error('Failed to load user details:', error);
+    } catch (err) {
+      console.error('Failed to load user details:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -91,10 +96,15 @@ export default function UserDetailPage() {
     );
   }
 
-  if (!user) {
+  if (error || !user) {
     return (
       <AdminLayout>
-        <div className="text-red-600">User not found</div>
+        <AdminErrorState
+          title="Failed to load user details"
+          message={error || 'User not found'}
+          onRetry={loadUserDetails}
+          retrying={loading}
+        />
       </AdminLayout>
     );
   }
