@@ -14,6 +14,7 @@ import raceHistoryRoutes from './raceHistory';
 import memoriesRoutes from './memories';
 import coachingRoutes from './coaching';
 import chartDataRoutes from './chartData.routes';
+import feedbackRoutes from './feedback';
 
 const router = Router();
 
@@ -32,5 +33,6 @@ router.use('/admin', adminRoutes);
 router.use('/memories', memoriesRoutes);
 router.use('/coaching', coachingRoutes);
 router.use('/chart-data', chartDataRoutes);
+router.use('/feedback', feedbackRoutes);
 
 export default router;

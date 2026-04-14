@@ -16,6 +16,9 @@ import TelemetryPage from './pages/admin/TelemetryPage';
 import ErrorsPage from './pages/admin/ErrorsPage';
 import AuditLogsPage from './pages/admin/AuditLogsPage';
 import TokenUsagePage from './pages/admin/TokenUsagePage';
+import FeedbackPage from './pages/admin/FeedbackPage';
+import AboutPage from './pages/AboutPage';
+import ContactPage from './pages/ContactPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -34,6 +37,8 @@ function App() {
     <Routes>
       <Route path="/" element={<LoginPage />} />
       <Route path="/callback" element={<CallbackPage />} />
+      <Route path="/about" element={<AboutPage />} />
+      <Route path="/contact" element={<ContactPage />} />
       <Route
         path="/dashboard"
         element={
@@ -143,6 +148,14 @@ function App() {
         element={
           <ProtectedRoute>
             <TokenUsagePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/feedback"
+        element={
+          <ProtectedRoute>
+            <FeedbackPage />
           </ProtectedRoute>
         }
       />

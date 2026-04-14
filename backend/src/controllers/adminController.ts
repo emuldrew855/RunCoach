@@ -30,6 +30,13 @@ import {
   getTokenUsageByModel,
   getTopUsersByTokenUsage,
 } from '../services/tokenUsageService';
+import {
+  getAllFeedback,
+  getFeedbackById,
+  updateFeedbackStatus,
+  getFeedbackCounts,
+  getNewFeedbackCount,
+} from '../models/Feedback';
 
 /**
  * GET /api/v1/admin/analytics
@@ -456,6 +463,126 @@ export async function getTopUsersByTokenController(
     const users = await getTopUsersByTokenUsage(limit);
 
     res.json(successResponse({ users, limit }));
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ============ Feedback Management ============
+
+/**
+ * GET /api/v1/admin/feedback
+ * Get all feedback submissions
+ */
+export async function getAllFeedbackController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = parseInt(req.query.offset as string) || 0;
+    const status = req.query.status as string | undefined;
+
+    const feedback = await getAllFeedback(limit, offset, status);
+    const counts = await getFeedbackCounts();
+
+    res.json(successResponse({ feedback, counts, limit, offset }));
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/v1/admin/feedback/count
+ * Get count of new feedback
+ */
+export async function getNewFeedbackCountController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const count = await getNewFeedbackCount();
+
+    res.json(successResponse({ count }));
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/v1/admin/feedback/:feedbackId
+ * Get a specific feedback submission
+ */
+export async function getFeedbackByIdController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const feedbackId = parseInt(req.params.feedbackId);
+
+    if (isNaN(feedbackId)) {
+      throw new ValidationError('Invalid feedback ID');
+    }
+
+    const feedback = await getFeedbackById(feedbackId);
+
+    if (!feedback) {
+      throw new NotFoundError('Feedback not found');
+    }
+
+    // Mark as read if it's new
+    if (feedback.status === 'new') {
+      await updateFeedbackStatus(feedbackId, 'read');
+      feedback.status = 'read';
+    }
+
+    res.json(successResponse({ feedback }));
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * PUT /api/v1/admin/feedback/:feedbackId
+ * Update feedback status
+ */
+export async function updateFeedbackController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const feedbackId = parseInt(req.params.feedbackId);
+    const { status, adminNotes } = req.body;
+
+    if (isNaN(feedbackId)) {
+      throw new ValidationError('Invalid feedback ID');
+    }
+
+    if (status && !['new', 'read', 'responded', 'resolved'].includes(status)) {
+      throw new ValidationError('Invalid status');
+    }
+
+    const feedback = await updateFeedbackStatus(feedbackId, status, adminNotes);
+
+    if (!feedback) {
+      throw new NotFoundError('Feedback not found');
+    }
+
+    // Log admin action
+    await logAdminAction(
+      req.user!.id,
+      'update_feedback',
+      feedback.user_id || undefined,
+      { feedbackId, status, adminNotes },
+      req.ip,
+      req.get('user-agent')
+    );
+
+    res.json(successResponse({ feedback }, 'Feedback updated'));
   } catch (error) {
     next(error);
   }

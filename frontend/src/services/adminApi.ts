@@ -40,4 +40,12 @@ export const adminAPI = {
   getTokenUsageByDate: (days: number = 30) => api.get(`/admin/token-usage/by-date?days=${days}`),
   getTokenUsageByModel: (days: number = 30) => api.get(`/admin/token-usage/by-model?days=${days}`),
   getTopUsersByToken: (limit: number = 10) => api.get(`/admin/token-usage/top-users?limit=${limit}`),
+
+  // Feedback Management
+  getAllFeedback: (params?: { limit?: number; offset?: number; status?: string }) =>
+    api.get('/admin/feedback', { params }),
+  getNewFeedbackCount: () => api.get('/admin/feedback/count'),
+  getFeedbackById: (feedbackId: number) => api.get(`/admin/feedback/${feedbackId}`),
+  updateFeedback: (feedbackId: number, data: { status?: string; adminNotes?: string }) =>
+    api.put(`/admin/feedback/${feedbackId}`, data),
 };

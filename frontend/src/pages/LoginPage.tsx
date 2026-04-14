@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { authAPI } from '../services/api';
 import { Activity, Brain, Calendar, TrendingUp, Zap, Shield } from 'lucide-react';
@@ -129,6 +129,31 @@ export default function LoginPage() {
         </div>
 
       </div>
+
+      {/* Footer */}
+      <footer className="border-t border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-gray-900/50">
+        <div className="container mx-auto px-4 py-6">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              © {new Date().getFullYear()} RunCoach. All rights reserved.
+            </p>
+            <div className="flex items-center gap-6">
+              <Link
+                to="/about"
+                className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+              >
+                About & Privacy
+              </Link>
+              <Link
+                to="/contact"
+                className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+              >
+                Contact Us
+              </Link>
+            </div>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

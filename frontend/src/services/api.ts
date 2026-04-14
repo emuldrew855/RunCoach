@@ -248,3 +248,14 @@ export const chartDataAPI = {
   getPBProgression: (params: { distance: number; days?: number }) =>
     api.get('/chart-data/pb-progression', { params }),
 };
+
+// Feedback API (public - no auth required)
+export const feedbackAPI = {
+  submitFeedback: (data: {
+    name?: string;
+    email?: string;
+    category?: 'general' | 'bug' | 'feature' | 'question' | 'other';
+    subject?: string;
+    message: string;
+  }) => api.post('/feedback', data),
+};

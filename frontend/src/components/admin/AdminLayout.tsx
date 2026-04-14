@@ -14,7 +14,8 @@ import {
   FileText,
   ArrowLeft,
   Shield,
-  Zap
+  Zap,
+  MessageSquare
 } from 'lucide-react';
 
 interface AdminLayoutProps {
@@ -57,6 +58,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
             </NavItem>
             <NavItem to="/admin/token-usage" icon={<Zap className="w-5 h-5" />}>
               Token Usage
+            </NavItem>
+            <NavItem to="/admin/feedback" icon={<MessageSquare className="w-5 h-5" />}>
+              Feedback
             </NavItem>
             <NavItem to="/admin/telemetry" icon={<Activity className="w-5 h-5" />}>
               API Telemetry

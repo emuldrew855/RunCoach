@@ -47,4 +47,10 @@ router.get('/token-usage/by-date', adminController.getTokenUsageByDateController
 router.get('/token-usage/by-model', adminController.getTokenUsageByModelController);
 router.get('/token-usage/top-users', adminController.getTopUsersByTokenController);
 
+// Feedback Management
+router.get('/feedback', adminController.getAllFeedbackController);
+router.get('/feedback/count', adminController.getNewFeedbackCountController);
+router.get('/feedback/:feedbackId', adminController.getFeedbackByIdController);
+router.put('/feedback/:feedbackId', adminController.updateFeedbackController);
+
 export default router;
