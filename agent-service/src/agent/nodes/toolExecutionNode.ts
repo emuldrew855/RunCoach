@@ -142,6 +142,20 @@ export async function saveResponseNode(state: any) {
   // Log what we're about to save
   console.log(`📝 Saving response: ${responseContent.length} chars, ${pendingActions.length} pending actions`);
 
+  // Collect tools used from tool messages
+  const toolsUsed: string[] = [];
+  for (const message of state.messages) {
+    if (message._getType() === 'tool') {
+      const toolMessage = message as any;
+      if (toolMessage.name && !toolsUsed.includes(toolMessage.name)) {
+        toolsUsed.push(toolMessage.name);
+      }
+    }
+  }
+
+  // Calculate response time
+  const responseTimeMs = state.startTime ? Date.now() - state.startTime : 0;
+
   // Save to backend
   try {
     await backendClient.saveAssistantMessage(
@@ -153,19 +167,27 @@ export async function saveResponseNode(state: any) {
       pendingActions.length > 0 ? pendingActions : undefined // pending actions
     );
 
-    // Track token usage if available
+    // Track enhanced agent usage analytics
     const usage = (lastAIMessage as any).usage_metadata;
     if (usage && state.modelUsed) {
-      await backendClient.trackTokenUsage(
+      await backendClient.trackAgentUsage(
         state.userId,
         state.conversationId,
         {
           promptTokens: usage.input_tokens || 0,
           completionTokens: usage.output_tokens || 0,
           totalTokens: usage.total_tokens || 0,
-        },
-        state.modelUsed,
-        'chat'
+          model: state.modelUsed,
+          requestType: 'agent',
+          // Extended analytics
+          intent: state.intent || 'general_chat',
+          intentConfidence: state.intentConfidence || 0,
+          architecture: state.architecture || 'single_pass',
+          responseTimeMs,
+          contextTokens: state.contextTokens || 0,
+          toolCallsCount: toolsUsed.length,
+          toolsUsed,
+        }
       );
     }
   } catch (error: any) {

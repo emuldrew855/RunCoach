@@ -107,7 +107,8 @@ const INTENT_PATTERNS = {
       'on track', 'how am i doing', "how's my week", 'weekly analysis',
       'monthly summary', 'consistency', 'volume', 'mileage',
       'total distance', 'training load', 'completed workouts',
-      'what did i do', 'what have i done'
+      'what did i do', 'what have i done',
+      'overall', 'been doing', 'how have i', 'rate my', 'my training'
     ],
     phrases: [
       /how'?s? (my|this) week/i,
@@ -115,6 +116,11 @@ const INTENT_PATTERNS = {
       /monthly (analysis|progress|summary)/i,
       /am i on track/i,
       /how am i doing/i,
+      /how (have i|'?ve i) been/i,                    // "how have I been doing"
+      /how (am|have) i (been )?(doing|progressing)/i, // "how am I doing", "how have I been doing"
+      /overall.*(progress|doing|training)/i,          // "overall progress", "overall how am I doing"
+      /(doing|progressing).*(overall)/i,              // "how am I doing overall"
+      /rate my (training|progress|week)/i,            // "rate my training"
       /my progress/i,
       /adherence rate/i,
       /(this|last) week'?s? (progress|summary)/i,
@@ -274,6 +280,9 @@ export function testIntentClassifier() {
     { message: "What did I complete this week?", expected: "progress_tracking" },
     { message: "Am I on track for my marathon?", expected: "progress_tracking" },
     { message: "How much mileage did I run last week?", expected: "progress_tracking" },
+    { message: "How have I been doing overall?", expected: "progress_tracking" },
+    { message: "How have I been doing?", expected: "progress_tracking" },
+    { message: "Rate my training so far", expected: "progress_tracking" },
 
     // General Chat
     { message: "Should I run today?", expected: "general_chat" },

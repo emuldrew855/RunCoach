@@ -119,8 +119,9 @@ router.get('/weekly-execution', authenticateToken, async (req, res) => {
 router.get('/smart-analysis', authenticateToken, async (req, res) => {
   try {
     const userId = req.user!.id;
+    const forceRefresh = req.query.refresh === 'true';
 
-    const analysis = await getSmartAnalysisCached(userId);
+    const analysis = await getSmartAnalysisCached(userId, forceRefresh);
 
     res.json(successResponse({ analysis }));
   } catch (error: any) {

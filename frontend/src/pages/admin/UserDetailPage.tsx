@@ -57,7 +57,8 @@ export default function UserDetailPage() {
       setLoading(true);
       setError(null);
       const response = await adminAPI.getUserDetails(parseInt(userId!));
-      setUser(response.data.data);
+      // Backend returns { data: { analytics: {...} } }
+      setUser(response.data.data.analytics);
     } catch (err) {
       console.error('Failed to load user details:', err);
       const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';

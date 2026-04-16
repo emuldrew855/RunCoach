@@ -4,11 +4,12 @@
  * Defines the LangGraph state structure and workflow.
  *
  * TWO-PASS ARCHITECTURE:
- * For plan_review and progress_tracking intents:
+ * For plan_review intent ONLY (requires tool calls for plan modifications):
  *   buildContext → analysis (Pass 1) → execution (Pass 2) → tools → saveResponse
  *
- * For other intents (run_analysis, general_chat):
- *   buildContext → agent → saveResponse (unchanged single-pass)
+ * SINGLE-PASS (CONVERSATIONAL):
+ * For progress_tracking, run_analysis, general_chat:
+ *   buildContext → agent → saveResponse (conversational response)
  *
  * This module:
  * 1. Defines AgentState annotation with all state fields
@@ -47,24 +48,33 @@ export const AgentState = Annotation.Root({
   // Two-pass architecture fields
   analysisResult: Annotation<string | null>, // Pass 1 output
   analysisVerdict: Annotation<string | null>, // SOUND | MINOR_ADJUSTMENTS | SIGNIFICANT_ISSUES
+  // Agent analytics tracking fields
+  startTime: Annotation<number>, // Timestamp when workflow started
+  intentConfidence: Annotation<number>, // Confidence score from intent classifier
+  architecture: Annotation<'two_pass' | 'single_pass'>, // Which architecture was used
+  contextTokens: Annotation<number>, // Estimated context token count
+  toolsUsed: Annotation<string[]>, // List of tools that were invoked
 });
 
 /**
  * Router: Decide between two-pass and single-pass after buildContext
- * Two-pass for: plan_review, progress_tracking, run_analysis
- * Single-pass for: general_chat
+ * Two-pass for: plan_review ONLY (requires tool calls for modifications)
+ * Single-pass for: progress_tracking, run_analysis, general_chat (conversational)
+ *
+ * NOTE: This function also returns state updates to track the architecture used
  */
 export function routeAfterContext(state: typeof AgentState.State): string {
   const intent = state.intent || 'general_chat';
 
-  // Two-pass architecture for all coaching intents
-  if (intent === 'plan_review' || intent === 'progress_tracking' || intent === 'run_analysis') {
+  // Two-pass architecture ONLY for plan_review (needs structured analysis + tool calls)
+  if (intent === 'plan_review') {
     console.log(`🔀 Routing to TWO-PASS architecture for intent: ${intent}`);
+    // Note: Architecture is set in state by buildContextNode based on intent
     return 'analysis';
   }
 
-  // Single-pass for general chat only
-  console.log(`🔀 Routing to SINGLE-PASS architecture for intent: ${intent}`);
+  // Single-pass (conversational) for all other intents
+  console.log(`🔀 Routing to SINGLE-PASS (conversational) architecture for intent: ${intent}`);
   return 'agent';
 }
 
@@ -116,14 +126,14 @@ export function shouldContinueAfterAgent(state: typeof AgentState.State): string
 
 /**
  * Router: After tools execution, decide whether to loop back or end
- * For two-pass: go to saveResponse (no loop back to agent)
+ * For two-pass (plan_review): go to saveResponse (no loop back to agent)
  * For single-pass: go back to agent
  */
 export function routeAfterTools(state: typeof AgentState.State): string {
   const intent = state.intent || 'general_chat';
 
-  // For two-pass, tools are the final step before saving
-  if (intent === 'plan_review' || intent === 'progress_tracking') {
+  // For two-pass (plan_review only), tools are the final step before saving
+  if (intent === 'plan_review') {
     console.log('✅ Two-pass complete, saving response');
     return 'saveResponse';
   }
@@ -134,7 +144,7 @@ export function routeAfterTools(state: typeof AgentState.State): string {
 
 /**
  * Create the LangGraph workflow
- * Supports both two-pass (plan_review, progress_tracking) and single-pass (others)
+ * Supports both two-pass (plan_review only) and single-pass (conversational for others)
  */
 export function createWorkflow() {
   const workflow = new StateGraph(AgentState)

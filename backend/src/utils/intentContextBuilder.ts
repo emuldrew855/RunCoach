@@ -65,6 +65,26 @@ function isHistoricalProgressQuery(message?: string): boolean {
 }
 
 /**
+ * Transform raw activity stats from snake_case to camelCase
+ * Matches the format expected by prompt templates
+ */
+function transformActivityStats(rawStats: any): {
+  totalRuns: number;
+  totalDistance: number;
+  averagePace: number;
+  totalElevation: number;
+  longestRun: number;
+} {
+  return {
+    totalRuns: parseInt(rawStats?.total_runs) || 0,
+    totalDistance: parseFloat(rawStats?.total_distance) / 1000 || 0, // Convert to km
+    averagePace: rawStats?.avg_speed ? (1000 / (parseFloat(rawStats.avg_speed) * 60)) : 0, // min/km
+    totalElevation: parseFloat(rawStats?.total_elevation) || 0,
+    longestRun: parseFloat(rawStats?.longest_run) / 1000 || 0, // Convert to km
+  };
+}
+
+/**
  * Build context based on detected intent
  * Routes to specialized builder to minimize token usage
  */
@@ -112,13 +132,18 @@ async function buildRunAnalysisContext(
 
   console.log('🏃 Run Analysis Context: Loading ONLY the specific run being discussed');
 
-  // Get recent activities to identify which one user is asking about
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-  const recentActivities = await getActivitiesAfterDate(userId, sevenDaysAgo);
+  // Determine how far back to search based on the query type
+  const isLongRunQuery = userMessage?.toLowerCase().includes('long run');
+  const searchDays = isLongRunQuery ? 30 : 7; // Extend to 30 days for long run queries
+
+  const searchDate = new Date();
+  searchDate.setDate(searchDate.getDate() - searchDays);
+  const recentActivities = await getActivitiesAfterDate(userId, searchDate);
+
+  console.log(`🔍 Searching last ${searchDays} days for activities (${recentActivities.length} found)`);
 
   // Identify the specific activity user is asking about
-  const targetActivity = identifyTargetActivity(recentActivities, userMessage);
+  const targetActivity = await identifyTargetActivity(recentActivities, userMessage, userId);
 
   console.log(`   Target activity: ${targetActivity?.name || 'Unknown'} on ${targetActivity?.start_date || 'Unknown date'}`);
 
@@ -447,7 +472,7 @@ async function buildProgressTrackingContext(userId: number): Promise<UserContext
     firstName: user.first_name,
     profile: filterProfileForCoaching(profile),
     activeGoal,
-    recentStats: weekStats,
+    recentStats: transformActivityStats(weekStats),
     activePlan: null, // Not needed for progress tracking
     upcomingWorkouts: plannedWorkoutsForContext, // THIS WEEK's planned workouts for adherence analysis
     thisWeekPlan: undefined,
@@ -657,7 +682,7 @@ async function buildGeneralChatContext(userId: number): Promise<UserContextData>
     profile: filterProfileForCoaching(profile),
     activeGoal,
     // recentActivities removed - redundant with dailyInsights
-    recentStats: weekStats,
+    recentStats: transformActivityStats(weekStats),
     activePlan: null,
     upcomingWorkouts: [],
     thisWeekPlan: undefined,
@@ -685,8 +710,13 @@ async function buildGeneralChatContext(userId: number): Promise<UserContextData>
 
 /**
  * Helper: Identify which activity user is asking about based on message
+ * Enhanced to handle "last long run" queries by looking at distance
  */
-function identifyTargetActivity(activities: any[], userMessage?: string): any | null {
+async function identifyTargetActivity(
+  activities: any[],
+  userMessage?: string,
+  userId?: number
+): Promise<any | null> {
   if (!userMessage) return activities[0]; // Default to most recent
 
   const messageLower = userMessage.toLowerCase();
@@ -712,13 +742,58 @@ function identifyTargetActivity(activities: any[], userMessage?: string): any | 
     }) || activities[0];
   }
 
-  // Check for workout type mentions
-  const workoutTypes = ['tempo', 'long run', 'interval', 'easy', 'recovery'];
+  // Special handling for "long run" - look for the most recent activity that:
+  // 1. Has "long run" in the name, OR
+  // 2. Is over 15km (typical long run threshold for marathon training)
+  if (messageLower.includes('long run')) {
+    console.log('🔍 Looking for last long run in activities...');
+
+    // First try to find by name
+    const byName = activities.find(a =>
+      a.name?.toLowerCase().includes('long run') ||
+      a.name?.toLowerCase().includes('long') ||
+      a.workout_type?.toLowerCase() === 'long_run'
+    );
+
+    if (byName) {
+      console.log(`   Found by name: ${byName.name} (${byName.distance_meters ? (byName.distance_meters / 1000).toFixed(1) : 'unknown'}km)`);
+      return byName;
+    }
+
+    // If not found by name, find by distance (>=15km is typically a long run)
+    const LONG_RUN_THRESHOLD_METERS = 15000;
+    const sortedByDistance = [...activities]
+      .filter(a => a.distance_meters && parseFloat(String(a.distance_meters)) >= LONG_RUN_THRESHOLD_METERS)
+      .sort((a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime());
+
+    if (sortedByDistance.length > 0) {
+      const longRun = sortedByDistance[0];
+      console.log(`   Found by distance: ${longRun.name} (${(parseFloat(String(longRun.distance_meters)) / 1000).toFixed(1)}km)`);
+      return longRun;
+    }
+
+    // If no long runs found, return the longest recent activity
+    const longestActivity = [...activities]
+      .filter(a => a.distance_meters)
+      .sort((a, b) => parseFloat(String(b.distance_meters)) - parseFloat(String(a.distance_meters)))[0];
+
+    if (longestActivity) {
+      console.log(`   No long runs found (>=15km). Returning longest activity: ${longestActivity.name} (${(parseFloat(String(longestActivity.distance_meters)) / 1000).toFixed(1)}km)`);
+      return longestActivity;
+    }
+
+    console.log('   No suitable activities found for long run query');
+    return activities[0];
+  }
+
+  // Check for other workout type mentions
+  const workoutTypes = ['tempo', 'interval', 'easy', 'recovery', 'speed', 'threshold'];
   for (const type of workoutTypes) {
     if (messageLower.includes(type)) {
-      return activities.find(a =>
+      const found = activities.find(a =>
         a.name?.toLowerCase().includes(type) || a.workout_type?.toLowerCase().includes(type)
-      ) || activities[0];
+      );
+      if (found) return found;
     }
   }
 

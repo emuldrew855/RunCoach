@@ -15,7 +15,8 @@ import {
   ArrowLeft,
   Shield,
   Zap,
-  MessageSquare
+  MessageSquare,
+  Brain
 } from 'lucide-react';
 
 interface AdminLayoutProps {
@@ -58,6 +59,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
             </NavItem>
             <NavItem to="/admin/token-usage" icon={<Zap className="w-5 h-5" />}>
               Token Usage
+            </NavItem>
+            <NavItem to="/admin/agent-analytics" icon={<Brain className="w-5 h-5" />}>
+              Agent Analytics
             </NavItem>
             <NavItem to="/admin/feedback" icon={<MessageSquare className="w-5 h-5" />}>
               Feedback

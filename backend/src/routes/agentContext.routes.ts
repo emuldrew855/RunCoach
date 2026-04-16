@@ -8,6 +8,15 @@ import { Router } from 'express';
 import { Request, Response, NextFunction } from 'express';
 import { buildUserContext } from '../utils/contextBuilder';
 import { buildContextForIntent, Intent } from '../utils/intentContextBuilder';
+import {
+  buildCoreContext,
+  buildActiveContext,
+  buildDeepContext,
+  getLastActivity,
+  getRecentActivities,
+  getUpcomingWorkoutsForDays,
+  getHRZoneSummaryForDays,
+} from '../utils/tieredContextBuilder';
 import { getMessagesByConversationId, createMessage } from '../models/Chat';
 import { requireServiceAuth } from '../middleware/serviceAuth';
 import { successResponse } from '../utils/apiResponse';
@@ -59,6 +68,212 @@ router.get('/context/:userId', async (req: Request, res: Response, next: NextFun
     res.json(successResponse({ context, intent: intent || 'full' }));
   } catch (error: any) {
     console.error('Failed to build user context:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ============================================
+// TIERED CONTEXT ENDPOINTS (for multi-agent architecture)
+// ============================================
+
+/**
+ * GET /api/v1/agent/context/:userId/core
+ * Fetch CORE context only (~1k tokens)
+ * Contains: Basic profile, goal, training phase
+ */
+router.get('/context/:userId/core', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = parseInt(req.params.userId);
+
+    if (isNaN(userId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID',
+      });
+    }
+
+    console.log(`📦 TIERED CONTEXT: Loading CORE for user ${userId}`);
+    const context = await buildCoreContext(userId);
+
+    res.json(successResponse({ context, tier: 'core', estimatedTokens: 1000 }));
+  } catch (error: any) {
+    console.error('Failed to build core context:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/v1/agent/context/:userId/active
+ * Fetch ACTIVE context (~3k tokens)
+ * Contains: This week's data, last 2 runs, current adherence
+ */
+router.get('/context/:userId/active', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = parseInt(req.params.userId);
+
+    if (isNaN(userId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID',
+      });
+    }
+
+    console.log(`📦 TIERED CONTEXT: Loading ACTIVE for user ${userId}`);
+    const context = await buildActiveContext(userId);
+
+    res.json(successResponse({ context, tier: 'active', estimatedTokens: 3000 }));
+  } catch (error: any) {
+    console.error('Failed to build active context:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/v1/agent/context/:userId/deep
+ * Fetch DEEP context (~15k tokens)
+ * Contains: 30-day history, 4-week plan, HR distribution, trends
+ */
+router.get('/context/:userId/deep', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = parseInt(req.params.userId);
+
+    if (isNaN(userId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID',
+      });
+    }
+
+    console.log(`📦 TIERED CONTEXT: Loading DEEP for user ${userId}`);
+    const context = await buildDeepContext(userId);
+
+    res.json(successResponse({ context, tier: 'deep', estimatedTokens: 15000 }));
+  } catch (error: any) {
+    console.error('Failed to build deep context:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ============================================
+// JIT DATA ENDPOINTS (for worker tools)
+// ============================================
+
+/**
+ * GET /api/v1/agent/data/last-activity/:userId
+ * Fetch just the most recent activity (~500 tokens)
+ */
+router.get('/data/last-activity/:userId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = parseInt(req.params.userId);
+
+    if (isNaN(userId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID',
+      });
+    }
+
+    const activity = await getLastActivity(userId);
+
+    res.json(successResponse({ activity }));
+  } catch (error: any) {
+    console.error('Failed to get last activity:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/v1/agent/data/recent-activities/:userId
+ * Fetch recent activities for N days (~300 tokens per activity)
+ */
+router.get('/data/recent-activities/:userId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = parseInt(req.params.userId);
+    const days = parseInt(req.query.days as string) || 7;
+
+    if (isNaN(userId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID',
+      });
+    }
+
+    const activities = await getRecentActivities(userId, Math.min(days, 30));
+
+    res.json(successResponse({ activities, days }));
+  } catch (error: any) {
+    console.error('Failed to get recent activities:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/v1/agent/data/upcoming-workouts/:userId
+ * Fetch upcoming workouts for N days (~500 tokens for 7 days)
+ */
+router.get('/data/upcoming-workouts/:userId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = parseInt(req.params.userId);
+    const days = parseInt(req.query.days as string) || 7;
+
+    if (isNaN(userId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID',
+      });
+    }
+
+    const workouts = await getUpcomingWorkoutsForDays(userId, Math.min(days, 28));
+
+    res.json(successResponse({ workouts, days }));
+  } catch (error: any) {
+    console.error('Failed to get upcoming workouts:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/v1/agent/data/hr-zones/:userId
+ * Fetch HR zone summary for N days (~400 tokens)
+ */
+router.get('/data/hr-zones/:userId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = parseInt(req.params.userId);
+    const days = parseInt(req.query.days as string) || 30;
+
+    if (isNaN(userId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID',
+      });
+    }
+
+    const hrZones = await getHRZoneSummaryForDays(userId, Math.min(days, 90));
+
+    res.json(successResponse({ hrZones, days }));
+  } catch (error: any) {
+    console.error('Failed to get HR zone summary:', error);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -159,23 +374,66 @@ router.post('/update-message-actions', async (req: Request, res: Response, next:
 /**
  * POST /api/v1/agent/token-usage
  * Track token usage from agent service
+ * Supports both basic token tracking and extended agent analytics
  */
 router.post('/token-usage', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { userId, conversationId, promptTokens, completionTokens, totalTokens, model, requestType } =
-      req.body;
-
-    await trackTokenUsage(
+    const {
       userId,
       conversationId,
-      {
-        promptTokens,
-        completionTokens,
-        totalTokens,
-      },
+      promptTokens,
+      completionTokens,
+      totalTokens,
       model,
-      requestType
-    );
+      requestType,
+      // Extended agent analytics fields
+      intent,
+      intentConfidence,
+      architecture,
+      responseTimeMs,
+      contextTokens,
+      toolCallsCount,
+      toolsUsed,
+    } = req.body;
+
+    // Check if this is an extended agent request or basic token tracking
+    const hasExtendedFields = intent || architecture || responseTimeMs !== undefined;
+
+    if (hasExtendedFields) {
+      // Use extended agent tracking
+      const { trackAgentUsage } = require('../services/tokenUsageService');
+      await trackAgentUsage(
+        userId,
+        conversationId,
+        {
+          promptTokens,
+          completionTokens,
+          totalTokens,
+          intent,
+          intentConfidence,
+          architecture,
+          responseTimeMs,
+          contextTokens,
+          toolCallsCount,
+          toolsUsed,
+        },
+        model,
+        requestType
+      );
+    } else {
+      // Use basic token tracking
+      await trackTokenUsage(
+        userId,
+        conversationId,
+        {
+          promptTokens,
+          completionTokens,
+          totalTokens,
+        },
+        model,
+        requestType
+      );
+    }
 
     res.json(successResponse({ tracked: true }));
   } catch (error: any) {

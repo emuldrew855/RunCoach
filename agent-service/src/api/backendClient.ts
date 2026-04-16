@@ -39,6 +39,114 @@ class BackendClient {
     }
   }
 
+  // ============================================
+  // TIERED CONTEXT METHODS (for multi-agent architecture)
+  // ============================================
+
+  /**
+   * Fetch CORE context (~1k tokens)
+   * Contains: Basic profile, goal, training phase
+   */
+  async getCoreContext(userId: number): Promise<any> {
+    try {
+      const response = await this.client.get(`/api/v1/agent/context/${userId}/core`);
+      return response.data.data.context;
+    } catch (error: any) {
+      console.error('Failed to fetch core context:', error.message);
+      throw new Error(`Failed to fetch core context: ${error.message}`);
+    }
+  }
+
+  /**
+   * Fetch ACTIVE context (~3k tokens)
+   * Contains: This week's data, last 2 runs, current adherence
+   */
+  async getActiveContext(userId: number): Promise<any> {
+    try {
+      const response = await this.client.get(`/api/v1/agent/context/${userId}/active`);
+      return response.data.data.context;
+    } catch (error: any) {
+      console.error('Failed to fetch active context:', error.message);
+      throw new Error(`Failed to fetch active context: ${error.message}`);
+    }
+  }
+
+  /**
+   * Fetch DEEP context (~15k tokens)
+   * Contains: 30-day history, 4-week plan, HR distribution, trends
+   */
+  async getDeepContext(userId: number): Promise<any> {
+    try {
+      const response = await this.client.get(`/api/v1/agent/context/${userId}/deep`);
+      return response.data.data.context;
+    } catch (error: any) {
+      console.error('Failed to fetch deep context:', error.message);
+      throw new Error(`Failed to fetch deep context: ${error.message}`);
+    }
+  }
+
+  // ============================================
+  // JIT DATA METHODS (for worker tools)
+  // ============================================
+
+  /**
+   * Fetch just the most recent activity (~500 tokens)
+   */
+  async getLastActivity(userId: number): Promise<any> {
+    try {
+      const response = await this.client.get(`/api/v1/agent/data/last-activity/${userId}`);
+      return response.data.data.activity;
+    } catch (error: any) {
+      console.error('Failed to fetch last activity:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch recent activities for N days (~300 tokens per activity)
+   */
+  async getRecentActivities(userId: number, days: number = 7): Promise<any[]> {
+    try {
+      const response = await this.client.get(
+        `/api/v1/agent/data/recent-activities/${userId}?days=${days}`
+      );
+      return response.data.data.activities || [];
+    } catch (error: any) {
+      console.error('Failed to fetch recent activities:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Fetch upcoming workouts for N days (~500 tokens for 7 days)
+   */
+  async getUpcomingWorkouts(userId: number, days: number = 7): Promise<any[]> {
+    try {
+      const response = await this.client.get(
+        `/api/v1/agent/data/upcoming-workouts/${userId}?days=${days}`
+      );
+      return response.data.data.workouts || [];
+    } catch (error: any) {
+      console.error('Failed to fetch upcoming workouts:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Fetch HR zone summary for N days (~400 tokens)
+   */
+  async getHRZoneSummary(userId: number, days: number = 30): Promise<any> {
+    try {
+      const response = await this.client.get(
+        `/api/v1/agent/data/hr-zones/${userId}?days=${days}`
+      );
+      return response.data.data.hrZones;
+    } catch (error: any) {
+      console.error('Failed to fetch HR zone summary:', error.message);
+      return null;
+    }
+  }
+
   /**
    * Fetch conversation history
    */
@@ -161,6 +269,53 @@ class BackendClient {
     } catch (error: any) {
       console.error('Failed to track token usage:', error.message);
       // Don't throw - token tracking failure shouldn't break the flow
+    }
+  }
+
+  /**
+   * Track agent usage with extended analytics (report back to backend)
+   * Includes intent, architecture, response time, context tokens, and tool usage
+   */
+  async trackAgentUsage(
+    userId: number,
+    conversationId: string,
+    data: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+      model: string;
+      requestType: string;
+      intent?: string;
+      intentConfidence?: number;
+      architecture?: 'two_pass' | 'single_pass';
+      responseTimeMs?: number;
+      contextTokens?: number;
+      toolCallsCount?: number;
+      toolsUsed?: string[];
+    }
+  ): Promise<void> {
+    try {
+      await this.client.post('/api/v1/agent/token-usage', {
+        userId,
+        conversationId,
+        promptTokens: data.promptTokens,
+        completionTokens: data.completionTokens,
+        totalTokens: data.totalTokens,
+        model: data.model,
+        requestType: data.requestType,
+        // Extended agent analytics fields
+        intent: data.intent,
+        intentConfidence: data.intentConfidence,
+        architecture: data.architecture,
+        responseTimeMs: data.responseTimeMs,
+        contextTokens: data.contextTokens,
+        toolCallsCount: data.toolCallsCount,
+        toolsUsed: data.toolsUsed,
+      });
+      console.log(`📊 Agent analytics tracked: intent=${data.intent}, arch=${data.architecture}, responseTime=${data.responseTimeMs}ms, contextTokens=${data.contextTokens}`);
+    } catch (error: any) {
+      console.error('Failed to track agent usage:', error.message);
+      // Don't throw - analytics tracking failure shouldn't break the flow
     }
   }
 

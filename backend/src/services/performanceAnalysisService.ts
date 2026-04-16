@@ -151,14 +151,22 @@ async function getComplianceScore(userId: number): Promise<{
   intensityIssue: string | null;
 }> {
   // Get this week's planned vs completed workouts
+  // IMPORTANT: Only count workouts scheduled on or before TODAY for compliance
   const now = new Date();
   const dayOfWeek = now.getDay();
   const monday = new Date(now);
   monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
   monday.setHours(0, 0, 0, 0);
 
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
+  // Use today as the end date for compliance (not Sunday)
+  // This way we only count workouts that SHOULD have been completed by now
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+
+  const mondayStr = monday.toISOString().split('T')[0];
+  const todayStr = today.toISOString().split('T')[0];
+
+  console.log(`📊 Compliance check: Monday=${mondayStr}, Today=${todayStr}`);
 
   const result = await pool.query(
     `SELECT
@@ -169,14 +177,18 @@ async function getComplianceScore(userId: number): Promise<{
      WHERE user_id = $1
        AND scheduled_date >= $2
        AND scheduled_date <= $3`,
-    [userId, monday.toISOString().split('T')[0], sunday.toISOString().split('T')[0]]
+    [userId, mondayStr, todayStr]
   );
 
   const data = result.rows[0];
   const totalPlanned = parseInt(data.total_planned) || 0;
   const completed = parseInt(data.completed) || 0;
+  const skipped = parseInt(data.skipped) || 0;
+
+  console.log(`📊 Compliance: ${completed} completed / ${totalPlanned} planned (${skipped} skipped)`);
 
   const score = totalPlanned > 0 ? Math.round((completed / totalPlanned) * 100) : 100;
+  console.log(`📊 Compliance score: ${score}%`);
 
   // Check for intensity drift (easy runs in high HR zones)
   const intensityResult = await pool.query(
@@ -192,7 +204,7 @@ async function getComplianceScore(userId: number): Promise<{
        AND pw.scheduled_date <= $3
        AND pw.workout_type IN ('easy', 'recovery')
      GROUP BY pw.workout_type`,
-    [userId, monday.toISOString().split('T')[0], sunday.toISOString().split('T')[0]]
+    [userId, monday.toISOString().split('T')[0], today.toISOString().split('T')[0]]
   );
 
   let intensityIssue: string | null = null;
@@ -549,18 +561,23 @@ export async function getSmartAnalysis(userId: number): Promise<SmartAnalysis> {
  * Get analysis with caching (for dashboard performance)
  * Analysis is cached for 1 hour to avoid repeated LLM calls
  */
-export async function getSmartAnalysisCached(userId: number): Promise<SmartAnalysis> {
-  // Check cache first
-  const cacheResult = await pool.query(
-    `SELECT analysis_data, generated_at
-     FROM performance_analysis_cache
-     WHERE user_id = $1
-       AND generated_at > NOW() - INTERVAL '1 hour'`,
-    [userId]
-  );
+export async function getSmartAnalysisCached(userId: number, forceRefresh: boolean = false): Promise<SmartAnalysis> {
+  // Check cache first (unless force refresh)
+  if (!forceRefresh) {
+    const cacheResult = await pool.query(
+      `SELECT analysis_data, generated_at
+       FROM performance_analysis_cache
+       WHERE user_id = $1
+         AND generated_at > NOW() - INTERVAL '1 hour'`,
+      [userId]
+    );
 
-  if (cacheResult.rows.length > 0) {
-    return cacheResult.rows[0].analysis_data;
+    if (cacheResult.rows.length > 0) {
+      console.log(`📊 Status Pulse: Returning cached analysis (generated at ${cacheResult.rows[0].generated_at})`);
+      return cacheResult.rows[0].analysis_data;
+    }
+  } else {
+    console.log(`📊 Status Pulse: Force refresh requested, bypassing cache`);
   }
 
   // Generate fresh analysis

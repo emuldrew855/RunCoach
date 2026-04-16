@@ -4,33 +4,59 @@
  * Main entry point for the LangGraph-based coaching agent.
  * This file orchestrates the workflow execution and manages checkpointing.
  *
- * Architecture:
- * - tools/workoutTools.ts: All 6 workout management tools
- * - nodes/buildContextNode.ts: Context building and intent classification
- * - nodes/agentNode.ts: LLM decision-making
- * - nodes/toolExecutionNode.ts: Tool execution and response saving
- * - workflow/graphSetup.ts: Graph structure and routing logic
+ * ARCHITECTURES:
+ * 1. Legacy (monolithic): Single graph with full context loading
+ *    - workflow/graphSetup.ts
+ *
+ * 2. Supervisor (multi-agent): Orchestrator-Worker pattern with JIT context
+ *    - workflow/supervisorGraphSetup.ts
+ *    - router/llmRouter.ts
+ *    - nodes/workers/*.ts
+ *
+ * Toggle via USE_SUPERVISOR_ARCHITECTURE environment variable
  */
 
 import { HumanMessage } from '@langchain/core/messages';
 import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { pool } from '../config/database';
 import { createWorkflow } from './workflow/graphSetup';
+import { createSupervisorWorkflow } from './workflow/supervisorGraphSetup';
+import { createInitialSupervisorState } from './workflow/supervisorState';
+
+// Feature flag for supervisor architecture
+const USE_SUPERVISOR_ARCHITECTURE = process.env.USE_SUPERVISOR_ARCHITECTURE === 'true';
 
 /**
  * CoachGraphAgent - LangGraph implementation
  * Manages the workflow execution with PostgreSQL checkpointing
+ *
+ * Supports two architectures:
+ * 1. Legacy: Monolithic context, regex-based intent classification
+ * 2. Supervisor: Multi-agent, JIT context, LLM-based routing
  */
 export class CoachGraphAgent {
   private checkpointer: PostgresSaver;
   private graph: any;
+  private supervisorGraph: any;
   private initialized: boolean = false;
+  private useSupervisor: boolean;
 
   constructor() {
     // Initialize PostgresSaver with connection pool
     this.checkpointer = new PostgresSaver(pool);
-    const workflow = createWorkflow();
-    this.graph = workflow.compile({ checkpointer: this.checkpointer });
+    this.useSupervisor = USE_SUPERVISOR_ARCHITECTURE;
+
+    // Create the appropriate workflow(s)
+    const legacyWorkflow = createWorkflow();
+    this.graph = legacyWorkflow.compile({ checkpointer: this.checkpointer });
+
+    if (this.useSupervisor) {
+      console.log('🚀 Using SUPERVISOR (multi-agent) architecture');
+      const supervisorWorkflow = createSupervisorWorkflow();
+      this.supervisorGraph = supervisorWorkflow.compile({ checkpointer: this.checkpointer });
+    } else {
+      console.log('📦 Using LEGACY (monolithic) architecture');
+    }
   }
 
   /**
@@ -158,25 +184,37 @@ export class CoachGraphAgent {
 
   /**
    * Process a user message through the LangGraph workflow
+   * Supports both legacy (monolithic) and supervisor (multi-agent) architectures
    */
   async *process(input: {
     userId: number;
     conversationId: string;
     userMessage: string;
   }): AsyncGenerator<any, void, unknown> {
-    console.log('🚀 Starting LangGraph workflow...');
+    const architecture = this.useSupervisor ? 'SUPERVISOR' : 'LEGACY';
+    console.log(`🚀 Starting LangGraph workflow (${architecture})...`);
     console.log(`👤 User: ${input.userId}, Conversation: ${input.conversationId}`);
 
-    const initialState = {
-      messages: [new HumanMessage(input.userMessage)],
-      userId: input.userId,
-      conversationId: input.conversationId,
-      userContext: null,
-      modelUsed: '',
-      tokenUsage: null,
-      pendingActions: [],
-      stepCount: 0,
-    };
+    // Select appropriate graph and initial state based on architecture
+    const graph = this.useSupervisor ? this.supervisorGraph : this.graph;
+    const initialState = this.useSupervisor
+      ? createInitialSupervisorState(input.userId, input.conversationId, input.userMessage)
+      : {
+          messages: [new HumanMessage(input.userMessage)],
+          userId: input.userId,
+          conversationId: input.conversationId,
+          userContext: null,
+          modelUsed: '',
+          tokenUsage: null,
+          pendingActions: [],
+          stepCount: 0,
+          // Agent analytics tracking
+          startTime: Date.now(),
+          intentConfidence: 0,
+          architecture: 'single_pass' as const, // Will be updated in buildContextNode
+          contextTokens: 0,
+          toolsUsed: [],
+        };
 
     try {
       // Stream the graph execution
@@ -189,7 +227,7 @@ export class CoachGraphAgent {
       };
 
       // Execute the graph with streaming
-      const stream = await this.graph.stream(initialState, {
+      const stream = await graph.stream(initialState, {
         ...config,
         streamMode: 'values',
       });
@@ -224,30 +262,48 @@ export class CoachGraphAgent {
           lastMessageCount = currentMessageCount;
         }
 
-        // Yield status updates
-        yield {
+        // Yield status updates (include routing info for supervisor architecture)
+        const statusUpdate: any = {
           type: 'status',
           stepCount: state.stepCount || 0,
-          currentNode: 'processing',
+          currentNode: state.currentWorker || 'processing',
         };
+
+        // Add supervisor-specific metadata
+        if (this.useSupervisor && state.routingDecision) {
+          statusUpdate.routingDecision = state.routingDecision;
+          statusUpdate.activeWorkers = state.activeWorkers;
+        }
+
+        yield statusUpdate;
       }
 
       // Final completion message
       if (lastState) {
-        yield {
+        const completionMessage: any = {
           type: 'complete',
           modelUsed: lastState.modelUsed,
           tokenUsage: lastState.tokenUsage,
           stepCount: lastState.stepCount,
         };
+
+        // Add supervisor-specific completion info
+        if (this.useSupervisor) {
+          completionMessage.architecture = 'supervisor';
+          completionMessage.workersUsed = lastState.workerOutputs?.map((w: any) => w.worker) || [];
+          completionMessage.pendingActions = lastState.pendingActions || [];
+        }
+
+        yield completionMessage;
       }
 
-      console.log('✅ LangGraph workflow completed');
+      console.log(`✅ LangGraph workflow completed (${architecture})`);
     } catch (error: any) {
-      console.error('❌ LangGraph workflow error:', error);
+      console.error(`❌ LangGraph workflow error (${architecture}):`, error);
       yield {
         type: 'error',
         error: error.message,
+        architecture,
       };
     }
   }
@@ -264,7 +320,9 @@ export class CoachGraphAgent {
       },
     };
 
-    const state = await this.graph.getState(config);
+    // Use appropriate graph based on architecture
+    const graph = this.useSupervisor ? this.supervisorGraph : this.graph;
+    const state = await graph.getState(config);
 
     // Verify checkpoint ownership for security
     if (state && state.values && state.values.userId !== userId) {
@@ -285,7 +343,9 @@ export class CoachGraphAgent {
       },
     };
 
-    const stream = await this.graph.stream(input, {
+    // Use appropriate graph based on architecture
+    const graph = this.useSupervisor ? this.supervisorGraph : this.graph;
+    const stream = await graph.stream(input, {
       ...config,
       streamMode: 'values',
     });
@@ -293,5 +353,12 @@ export class CoachGraphAgent {
     for await (const state of stream) {
       yield state;
     }
+  }
+
+  /**
+   * Check which architecture is currently in use
+   */
+  getArchitecture(): 'supervisor' | 'legacy' {
+    return this.useSupervisor ? 'supervisor' : 'legacy';
   }
 }

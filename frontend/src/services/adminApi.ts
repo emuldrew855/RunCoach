@@ -41,6 +41,13 @@ export const adminAPI = {
   getTokenUsageByModel: (days: number = 30) => api.get(`/admin/token-usage/by-model?days=${days}`),
   getTopUsersByToken: (limit: number = 10) => api.get(`/admin/token-usage/top-users?limit=${limit}`),
 
+  // Agent Analytics
+  getAgentAnalyticsSummary: () => api.get('/admin/agent-analytics/summary'),
+  getAgentIntentDistribution: () => api.get('/admin/agent-analytics/intents'),
+  getAgentModelUsage: () => api.get('/admin/agent-analytics/models'),
+  getAgentDailyMetrics: (days: number = 30) => api.get(`/admin/agent-analytics/daily?days=${days}`),
+  getAgentRecentRequests: (limit: number = 50) => api.get(`/admin/agent-analytics/recent?limit=${limit}`),
+
   // Feedback Management
   getAllFeedback: (params?: { limit?: number; offset?: number; status?: string }) =>
     api.get('/admin/feedback', { params }),

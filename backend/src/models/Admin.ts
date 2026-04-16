@@ -302,7 +302,7 @@ export async function getRecentSessions(
 }
 
 /**
- * Get API telemetry
+ * Get API telemetry - returns individual entries for detailed view
  */
 export async function getAPITelemetry(
   limit: number = 100,
@@ -311,12 +311,16 @@ export async function getAPITelemetry(
 ): Promise<any[]> {
   let sql = `
     SELECT
-      endpoint,
+      id,
+      user_id,
       method,
+      endpoint,
       status_code,
-      AVG(response_time_ms)::INTEGER as avg_response_time,
-      COUNT(*) as request_count,
-      SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as error_count
+      response_time_ms,
+      request_size_bytes,
+      response_size_bytes,
+      ip_address,
+      created_at
     FROM api_telemetry
     WHERE created_at > NOW() - INTERVAL '24 hours'
   `;
@@ -331,12 +335,12 @@ export async function getAPITelemetry(
     sql += ` AND status_code >= 400`;
   }
 
-  sql += ` GROUP BY endpoint, method, status_code ORDER BY request_count DESC LIMIT $${params.length + 1}`;
+  sql += ` ORDER BY created_at DESC LIMIT $${params.length + 1}`;
   params.push(limit);
 
   const result = await query(sql, params);
 
-  const numericFields = ['status_code', 'avg_response_time', 'request_count', 'error_count'];
+  const numericFields = ['id', 'user_id', 'status_code', 'response_time_ms', 'request_size_bytes', 'response_size_bytes'];
 
   return result.rows.map(row => parseNumericFields(row, numericFields));
 }

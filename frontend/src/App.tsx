@@ -16,6 +16,7 @@ import TelemetryPage from './pages/admin/TelemetryPage';
 import ErrorsPage from './pages/admin/ErrorsPage';
 import AuditLogsPage from './pages/admin/AuditLogsPage';
 import TokenUsagePage from './pages/admin/TokenUsagePage';
+import AgentAnalyticsPage from './pages/admin/AgentAnalyticsPage';
 import FeedbackPage from './pages/admin/FeedbackPage';
 import AboutPage from './pages/AboutPage';
 import ContactPage from './pages/ContactPage';
@@ -148,6 +149,14 @@ function App() {
         element={
           <ProtectedRoute>
             <TokenUsagePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/agent-analytics"
+        element={
+          <ProtectedRoute>
+            <AgentAnalyticsPage />
           </ProtectedRoute>
         }
       />

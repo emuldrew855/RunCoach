@@ -96,10 +96,24 @@ export async function buildContextNode(state: any) {
     console.log(systemPrompt);
     console.log('========== END SYSTEM PROMPT ==========\n');
 
+    // Estimate context tokens (rough estimate: 4 chars ≈ 1 token)
+    const systemPromptTokens = Math.ceil(systemPrompt.length / 4);
+    const historyTokens = historyMessages.reduce((sum, msg) => {
+      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      return sum + Math.ceil(content.length / 4);
+    }, 0);
+    const estimatedContextTokens = systemPromptTokens + historyTokens;
+
+    // Determine architecture based on intent
+    const architecture = intentResult.intent === 'plan_review' ? 'two_pass' : 'single_pass';
+
     return {
       userContext,
       messages: [systemMessage, ...historyMessages],
       intent: intentResult.intent, // Store intent in state for agent router
+      intentConfidence: intentResult.confidence, // Store confidence for analytics
+      architecture, // Store architecture type for analytics
+      contextTokens: estimatedContextTokens, // Store estimated context tokens
       stepCount: state.stepCount + 1,
     };
   } catch (error: any) {

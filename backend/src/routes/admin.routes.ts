@@ -47,6 +47,13 @@ router.get('/token-usage/by-date', adminController.getTokenUsageByDateController
 router.get('/token-usage/by-model', adminController.getTokenUsageByModelController);
 router.get('/token-usage/top-users', adminController.getTopUsersByTokenController);
 
+// Agent Analytics
+router.get('/agent-analytics/summary', adminController.getAgentAnalyticsSummaryController);
+router.get('/agent-analytics/intents', adminController.getAgentIntentDistributionController);
+router.get('/agent-analytics/models', adminController.getAgentModelUsageController);
+router.get('/agent-analytics/daily', adminController.getAgentDailyMetricsController);
+router.get('/agent-analytics/recent', adminController.getAgentRecentRequestsController);
+
 // Feedback Management
 router.get('/feedback', adminController.getAllFeedbackController);
 router.get('/feedback/count', adminController.getNewFeedbackCountController);

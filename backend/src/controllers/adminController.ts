@@ -29,6 +29,11 @@ import {
   getTokenUsageByDate,
   getTokenUsageByModel,
   getTopUsersByTokenUsage,
+  getAgentAnalyticsSummary,
+  getAgentIntentDistribution,
+  getAgentModelUsage,
+  getAgentDailyMetrics,
+  getAgentRecentRequests,
 } from '../services/tokenUsageService';
 import {
   getAllFeedback,
@@ -583,6 +588,97 @@ export async function updateFeedbackController(
     );
 
     res.json(successResponse({ feedback }, 'Feedback updated'));
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ============================================================================
+// Agent Analytics Controllers
+// ============================================================================
+
+/**
+ * GET /api/v1/admin/agent-analytics/summary
+ * Get agent analytics summary with key metrics
+ */
+export async function getAgentAnalyticsSummaryController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const summary = await getAgentAnalyticsSummary();
+    res.json(successResponse({ summary }));
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/v1/admin/agent-analytics/intents
+ * Get intent distribution for pie chart
+ */
+export async function getAgentIntentDistributionController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const intents = await getAgentIntentDistribution();
+    res.json(successResponse({ intents }));
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/v1/admin/agent-analytics/models
+ * Get model usage breakdown
+ */
+export async function getAgentModelUsageController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const models = await getAgentModelUsage();
+    res.json(successResponse({ models }));
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/v1/admin/agent-analytics/daily
+ * Get daily metrics for trend charts
+ */
+export async function getAgentDailyMetricsController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const days = parseInt(req.query.days as string) || 30;
+    const metrics = await getAgentDailyMetrics(days);
+    res.json(successResponse({ metrics }));
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/v1/admin/agent-analytics/recent
+ * Get recent agent requests with full details
+ */
+export async function getAgentRecentRequestsController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const requests = await getAgentRecentRequests(limit);
+    res.json(successResponse({ requests }));
   } catch (error) {
     next(error);
   }
