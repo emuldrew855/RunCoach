@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, addWeeks, subWeeks, isToday, addDays, subDays } from 'date-fns';
 import { ChevronLeft, ChevronRight, CheckCircle2, Circle, Clock, Move, X, GripVertical } from 'lucide-react';
 import { usePreferences } from '../../context/PreferencesContext';
@@ -56,7 +56,10 @@ export const MobileAgendaView: React.FC<MobileAgendaViewProps> = ({
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [datePickerWeek, setDatePickerWeek] = useState<Date>(new Date());
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [isLongPressing, setIsLongPressing] = useState(false);
+  // Ref (not state) so the value is available synchronously in the click handler
+  // that fires immediately after touchend before any re-render can occur.
+  const longPressActivated = useRef(false);
+  const touchStartPos = useRef<{ x: number; y: number } | null>(null);
 
   const weekStart = startOfWeek(currentWeekStart, {
     weekStartsOn: preferences.weekStartsOn === 'monday' ? 1 : 0,
@@ -86,11 +89,14 @@ export const MobileAgendaView: React.FC<MobileAgendaViewProps> = ({
   };
 
   // Long press handlers for initiating move
-  const handleTouchStart = (workout: Workout) => {
+  const handleTouchStart = useCallback((workout: Workout, e: React.TouchEvent) => {
     if (workout.completion_status === 'completed') return; // Can't move completed workouts
 
+    touchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    longPressActivated.current = false;
+
     longPressTimer.current = setTimeout(() => {
-      setIsLongPressing(true);
+      longPressActivated.current = true;
       setMovingWorkout(workout);
       setDatePickerWeek(new Date(workout.scheduled_date));
       setShowDatePicker(true);
@@ -99,24 +105,33 @@ export const MobileAgendaView: React.FC<MobileAgendaViewProps> = ({
         navigator.vibrate(50);
       }
     }, 500); // 500ms long press
-  };
+  }, []);
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = useCallback(() => {
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
     }
-    setIsLongPressing(false);
-  };
+    touchStartPos.current = null;
+    // longPressActivated is intentionally NOT reset here because the browser
+    // fires the synthetic click event after touchend. The click handler reads
+    // the ref synchronously and resets it there.
+  }, []);
 
-  const handleTouchMove = () => {
-    // Cancel long press if finger moves
-    if (longPressTimer.current) {
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    // Cancel long press only if the finger has moved more than 10px, so that
+    // minor tremor during a hold does not prevent the gesture from activating.
+    if (!longPressTimer.current || !touchStartPos.current) return;
+
+    const dx = Math.abs(e.touches[0].clientX - touchStartPos.current.x);
+    const dy = Math.abs(e.touches[0].clientY - touchStartPos.current.y);
+
+    if (dx > 10 || dy > 10) {
       clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
+      longPressActivated.current = false;
     }
-    setIsLongPressing(false);
-  };
+  }, []);
 
   const handleMoveToDate = (newDate: Date) => {
     if (movingWorkout && onMoveWorkout) {
@@ -293,11 +308,12 @@ export const MobileAgendaView: React.FC<MobileAgendaViewProps> = ({
                         {/* Move handle - only for pending workouts */}
                         {workout.completion_status === 'pending' && onMoveWorkout && (
                           <button
-                            onTouchStart={() => handleTouchStart(workout)}
+                            onTouchStart={(e) => handleTouchStart(workout, e)}
                             onTouchEnd={handleTouchEnd}
-                            onTouchMove={handleTouchMove}
+                            onTouchMove={(e) => handleTouchMove(e)}
                             onClick={(e) => {
                               e.stopPropagation();
+                              longPressActivated.current = false;
                               setMovingWorkout(workout);
                               setDatePickerWeek(new Date(workout.scheduled_date));
                               setShowDatePicker(true);
@@ -312,13 +328,16 @@ export const MobileAgendaView: React.FC<MobileAgendaViewProps> = ({
                         {/* Main workout content */}
                         <button
                           onClick={() => {
-                            if (!isLongPressing) {
-                              onWorkoutClick(workout);
+                            // If a long press just activated the date picker, skip this click.
+                            if (longPressActivated.current) {
+                              longPressActivated.current = false;
+                              return;
                             }
+                            onWorkoutClick(workout);
                           }}
-                          onTouchStart={() => handleTouchStart(workout)}
+                          onTouchStart={(e) => handleTouchStart(workout, e)}
                           onTouchEnd={handleTouchEnd}
-                          onTouchMove={handleTouchMove}
+                          onTouchMove={(e) => handleTouchMove(e)}
                           className="flex-1 p-4 text-left active:scale-98"
                         >
                           <div className="flex items-start gap-3">
