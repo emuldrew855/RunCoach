@@ -50,6 +50,8 @@ export const activitiesAPI = {
   getActivity: (id: number, refresh?: boolean) =>
     api.get(`/activities/${id}`, { params: refresh ? { refresh: 'true' } : undefined }),
   recomputeInsights: (id: number) => api.post(`/activities/${id}/recompute-insights`),
+  getProcessedSplits: (id: number, recompute?: boolean) =>
+    api.get(`/activities/${id}/splits`, { params: recompute ? { recompute: 'true' } : undefined }),
   syncActivities: () => api.post('/activities/sync'),
   getStats: (days?: number) => api.get('/activities/stats', { params: { days } }),
   getHRZones: (days?: number) => api.get('/activities/hr-zones', { params: { days } }),

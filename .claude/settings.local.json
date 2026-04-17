@@ -63,7 +63,22 @@
       "Bash(az account show:*)",
       "Bash(az webapp deployment:*)",
       "Bash(az webapp restart:*)",
-      "Bash(az webapp up:*)"
+      "Bash(az webapp up:*)",
+      "Bash(git push)",
+      "Bash(az staticwebapp secrets list:*)",
+      "Bash(git push:*)",
+      "Bash(openssl rand:*)",
+      "Bash(PGPASSWORD='51JYBnzRrCF67H20t4Xx!1' psql \"postgresql://runcoach_admin@runcoach-db-a8d975.postgres.database.azure.com:5432/runcoach?sslmode=require\" -c \"SELECT id, email, first_name, last_name, is_admin FROM users WHERE LOWER\\(first_name\\) LIKE ''%edward%'' OR LOWER\\(email\\) LIKE ''%edward%'';\")",
+      "Bash(find:*)",
+      "Bash(docker-compose ps:*)",
+      "Bash(powershell.exe -Command \"Get-Service -Name ''postgresql*'' | Select-Object Name, Status\")",
+      "Bash(powershell.exe -Command \"& ''C:\\\\Program Files\\\\PostgreSQL\\\\18\\\\bin\\\\psql.exe'' -U postgres -c ''\\\\l'' 2>&1\")",
+      "Bash(sc query postgresql*)",
+      "Bash(tasklist:*)",
+      "Bash(wmic process where \"name=''postgres.exe''\" get ProcessId,CommandLine)",
+      "Bash(where:*)",
+      "Bash(NODE_OPTIONS=\"--max-old-space-size=4096\" npx tsc:*)",
+      "Bash(NODE_OPTIONS=\"--max-old-space-size=8192\" npm run build:*)"
     ]
   }
 }

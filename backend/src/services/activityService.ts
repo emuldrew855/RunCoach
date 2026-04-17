@@ -124,8 +124,12 @@ export async function syncActivities(userId: number): Promise<number> {
           console.log(`📋 Activity ${dbActivity.id} already linked to workout: ${plannedWorkout.name}`);
         } else {
           // Try to auto-link by date matching
-          const activityDate = new Date(activity.start_date);
-          const dateStr = activityDate.toISOString().split('T')[0]; // YYYY-MM-DD
+          // IMPORTANT: Use start_date_local to match the calendar date the user ran on
+          // Using start_date (UTC) can shift the date when activities happen late in the day
+          const localDateStr = activity.start_date_local
+            ? activity.start_date_local.split('T')[0]  // Already local, just extract date
+            : new Date(activity.start_date).toISOString().split('T')[0]; // Fallback to UTC
+          const dateStr = localDateStr; // YYYY-MM-DD in user's local timezone
 
           const dateMatchResult = await pool.query(
             `SELECT pw.* FROM planned_workouts pw
@@ -193,4 +197,104 @@ export async function syncActivities(userId: number): Promise<number> {
 
   console.log(`✅ Activity sync completed: ${newActivities} activities processed`);
   return newActivities;
+}
+
+/**
+ * Re-link activities to planned workouts using the correct local date.
+ * This repairs data that may have been incorrectly linked due to timezone issues.
+ */
+export async function relinkActivitiesToWorkouts(userId: number): Promise<{
+  relinked: number;
+  alreadyCorrect: number;
+  unmatched: number;
+}> {
+  console.log(`🔧 Starting activity re-link repair for user ${userId}`);
+
+  // Get all activities for this user from the last 90 days
+  const activitiesResult = await pool.query(
+    `SELECT id, start_date, start_date_local, distance_meters
+     FROM activities
+     WHERE user_id = $1
+       AND start_date >= NOW() - INTERVAL '90 days'
+     ORDER BY start_date DESC`,
+    [userId]
+  );
+
+  let relinked = 0;
+  let alreadyCorrect = 0;
+  let unmatched = 0;
+
+  for (const activity of activitiesResult.rows) {
+    // Use local date for matching (the fix)
+    const localDateStr = activity.start_date_local
+      ? new Date(activity.start_date_local).toISOString().split('T')[0]
+      : new Date(activity.start_date).toISOString().split('T')[0];
+
+    // Check if already correctly linked
+    const existingLinkResult = await pool.query(
+      `SELECT pw.id, pw.scheduled_date::text as scheduled_date
+       FROM planned_workouts pw
+       WHERE pw.completed_activity_id = $1`,
+      [activity.id]
+    );
+
+    if (existingLinkResult.rows[0]) {
+      const linkedWorkoutDate = existingLinkResult.rows[0].scheduled_date.split('T')[0];
+      if (linkedWorkoutDate === localDateStr) {
+        alreadyCorrect++;
+        continue; // Already correctly linked
+      }
+
+      // Unlink the incorrectly linked workout
+      await pool.query(
+        `UPDATE planned_workouts
+         SET completed_activity_id = NULL,
+             completion_status = 'pending',
+             completed_at = NULL
+         WHERE id = $1`,
+        [existingLinkResult.rows[0].id]
+      );
+      console.log(`🔗 Unlinked activity ${activity.id} from workout on wrong date (${linkedWorkoutDate} != ${localDateStr})`);
+    }
+
+    // Find the correct workout to link to
+    const correctWorkoutResult = await pool.query(
+      `SELECT pw.id, pw.name FROM planned_workouts pw
+       JOIN training_plans tp ON pw.training_plan_id = tp.id
+       WHERE tp.user_id = $1
+         AND tp.is_active = true
+         AND pw.scheduled_date = $2::date
+         AND pw.completed_activity_id IS NULL
+         AND pw.completion_status = 'pending'
+       ORDER BY
+         CASE
+           WHEN pw.target_distance_meters IS NOT NULL
+             AND ABS(pw.target_distance_meters - $3) / NULLIF(pw.target_distance_meters, 0) < 0.3
+           THEN 0
+           ELSE 1
+         END,
+         pw.id ASC
+       LIMIT 1`,
+      [userId, localDateStr, activity.distance_meters]
+    );
+
+    if (correctWorkoutResult.rows[0]) {
+      // Link to the correct workout
+      await pool.query(
+        `UPDATE planned_workouts
+         SET completed_activity_id = $1,
+             completion_status = 'completed',
+             completed_at = $2
+         WHERE id = $3`,
+        [activity.id, activity.start_date, correctWorkoutResult.rows[0].id]
+      );
+      relinked++;
+      console.log(`✅ Relinked activity ${activity.id} to workout "${correctWorkoutResult.rows[0].name}" on ${localDateStr}`);
+    } else {
+      unmatched++;
+    }
+  }
+
+  console.log(`🔧 Re-link repair complete: ${relinked} relinked, ${alreadyCorrect} already correct, ${unmatched} unmatched`);
+  return { relinked, alreadyCorrect, unmatched };
 }

@@ -142,8 +142,10 @@ export async function computeDailyInsight(
     const userHasPlan = await hasActivePlan(userId);
 
     // 1. Analyze pacing from splits
-    // NOTE: Strava API typically does not provide per-km splits, so this will use aggregate data
-    const pacingAnalysis = analyzePacing(activityData.splits_metric || activityData.splits);
+    // Prefer our processed_splits (computed from Strava streams) over Strava's splits_metric
+    const pacingAnalysis = activityData.processed_splits?.splits
+      ? analyzeProcessedSplits(activityData.processed_splits)
+      : analyzePacing(activityData.splits_metric || activityData.splits);
 
     // 2. Analyze heart rate behavior
     const hrBehavior = await analyzeHeartRate(userId, activityId, activityData, hrZones);
@@ -168,14 +170,21 @@ export async function computeDailyInsight(
       // 5a. Check compliance with plan (passing actual HR zone for comparison)
       complianceCheck = checkCompliance(activityData, plannedWorkout, hrBehavior.avgZone);
 
-      // 6a. Generate coaching points (personality-adjusted, plan-based)
+      // 5b. Evaluate workout execution against planned structure (for intervals, tempo, etc.)
+      const workoutExecution = evaluateWorkoutExecution(
+        activityData.processed_splits,
+        plannedWorkout
+      );
+
+      // 6a. Generate coaching points (personality-adjusted, plan-based, structure-aware)
       coachingPoints = generateCoachingPoints(
         pacingAnalysis,
         hrBehavior,
         effortAnalysis,
         complianceCheck,
         riskIndicators,
-        coachStyle
+        coachStyle,
+        workoutExecution
       );
     } else if (!userHasPlan) {
       // 5b. For plan-less users, compare against baseline
@@ -237,8 +246,480 @@ export async function computeDailyInsight(
   }
 }
 
+// ============================================================================
+// Workout Structure Parsing (for interval-aware evaluation)
+// ============================================================================
+
+interface WorkoutSegment {
+  type: 'warmup' | 'interval' | 'recovery' | 'cooldown' | 'easy';
+  distanceKm: number;
+  targetPaceMin?: number;  // min/km (min)
+  targetPaceMax?: number;  // min/km (max, slower)
+  repetitions?: number;
+}
+
+interface ParsedWorkoutStructure {
+  isStructured: boolean;
+  workoutType: string;
+  segments: WorkoutSegment[];
+  totalIntervals: number;
+  intervalTargetPace?: { min: number; max: number };
+  easyTargetPace?: { min: number; max: number };
+}
+
 /**
- * Analyze Pacing
+ * Parse workout structure from either:
+ * 1. Structured `intervals` JSONB field (preferred - explicit data)
+ * 2. Text `description` field (fallback - regex parsing)
+ *
+ * Examples of description parsing:
+ * - "1.6km Easy; 3 x 2M fast (400m rec); 1.6km Easy"
+ * - "10km Easy"
+ * - "6x800m @ 3:30/km with 400m jog"
+ */
+function parseWorkoutStructure(
+  plannedWorkout: any
+): ParsedWorkoutStructure {
+  const description = plannedWorkout?.description || '';
+  const workoutType = plannedWorkout?.workout_type || 'easy';
+  const targetPaceMin = plannedWorkout?.target_pace_min; // min/km (fast pace)
+  const targetPaceMax = plannedWorkout?.target_pace_max; // min/km (slow/easy pace)
+  const intervalsJson = plannedWorkout?.intervals; // Structured interval data
+
+  // Default result for non-structured workouts
+  const defaultResult: ParsedWorkoutStructure = {
+    isStructured: false,
+    workoutType,
+    segments: [],
+    totalIntervals: 0
+  };
+
+  // Check if this is an interval/structured workout
+  const hardWorkoutTypes = ['intervals', 'interval', 'tempo', 'speed', 'threshold'];
+  const isHardWorkout = hardWorkoutTypes.includes(workoutType.toLowerCase());
+
+  if (!isHardWorkout && workoutType !== 'long_run') {
+    return defaultResult;
+  }
+
+  // PRIORITY 1: Use structured intervals JSONB if available
+  if (intervalsJson && Array.isArray(intervalsJson) && intervalsJson.length > 0) {
+    console.log(`📊 Using structured intervals data for workout evaluation`);
+    const segments: WorkoutSegment[] = [];
+    let totalIntervals = 0;
+
+    for (const interval of intervalsJson) {
+      // Parse interval structure from JSONB
+      // Expected format: { type: 'interval'|'recovery'|'warmup'|'cooldown', distance_meters, pace_min, pace_max, reps }
+      const segmentType = interval.type?.toLowerCase() || 'interval';
+      const distanceKm = (interval.distance_meters || interval.distance || 0) / 1000;
+      const reps = interval.reps || interval.repetitions || 1;
+
+      if (segmentType === 'interval' || segmentType === 'fast' || segmentType === 'hard') {
+        totalIntervals += reps;
+        segments.push({
+          type: 'interval',
+          distanceKm,
+          repetitions: reps,
+          targetPaceMin: interval.pace_min || targetPaceMin,
+          targetPaceMax: interval.pace_max || (interval.pace_min ? interval.pace_min + 0.25 : undefined)
+        });
+      } else if (segmentType === 'recovery' || segmentType === 'jog' || segmentType === 'rest') {
+        segments.push({
+          type: 'recovery',
+          distanceKm,
+          repetitions: reps > 1 ? reps - 1 : 1,
+          targetPaceMin: targetPaceMax,
+          targetPaceMax: targetPaceMax ? targetPaceMax + 0.5 : undefined
+        });
+      } else if (segmentType === 'warmup' || segmentType === 'warm-up') {
+        segments.push({
+          type: 'warmup',
+          distanceKm,
+          targetPaceMin: targetPaceMax,
+          targetPaceMax: targetPaceMax ? targetPaceMax + 0.5 : undefined
+        });
+      } else if (segmentType === 'cooldown' || segmentType === 'cool-down') {
+        segments.push({
+          type: 'cooldown',
+          distanceKm,
+          targetPaceMin: targetPaceMax,
+          targetPaceMax: targetPaceMax ? targetPaceMax + 0.5 : undefined
+        });
+      } else {
+        // Default to easy segment
+        segments.push({
+          type: 'easy',
+          distanceKm,
+          targetPaceMin: targetPaceMax,
+          targetPaceMax: targetPaceMax ? targetPaceMax + 0.5 : undefined
+        });
+      }
+    }
+
+    if (segments.length > 0) {
+      // Compute interval target pace from segments or fallback to workout targets
+      let intervalMin: number | undefined;
+      let intervalMax: number | undefined;
+      if (targetPaceMin && !isNaN(targetPaceMin)) {
+        intervalMin = targetPaceMin;
+        intervalMax = (targetPaceMax && !isNaN(targetPaceMax) && targetPaceMax > targetPaceMin)
+          ? targetPaceMax
+          : targetPaceMin + 0.5;
+      }
+
+      return {
+        isStructured: true,
+        workoutType,
+        segments,
+        totalIntervals,
+        intervalTargetPace: intervalMin ? { min: intervalMin, max: intervalMax! } : undefined,
+        easyTargetPace: targetPaceMax && !isNaN(targetPaceMax) ? { min: targetPaceMax - 0.5, max: targetPaceMax + 0.5 } : undefined
+      };
+    }
+  }
+
+  // PRIORITY 2: Fall back to parsing description text
+  if (!description) {
+    return defaultResult;
+  }
+
+  // Parse interval patterns from text
+  // Patterns to match:
+  // "3 x 2M fast" or "3x2M" or "6x800m"
+  // "1.6km Easy" or "1.6 km easy"
+  // "(400m rec)" or "400m recovery" or "with 400m jog"
+  const segments: WorkoutSegment[] = [];
+
+  // Split description into parts by semicolon or common separators
+  const parts = description.split(/[;,]/).map((p: string) => p.trim()).filter((p: string) => p);
+
+  let totalIntervals = 0;
+
+  for (const part of parts) {
+    const lowerPart = part.toLowerCase();
+
+    // Check for interval pattern: "3 x 2M fast" or "3x800m"
+    const intervalMatch = part.match(/(\d+)\s*x\s*([\d.]+)\s*(km|m|mi|M)\s*(fast|hard|tempo)?/i);
+    if (intervalMatch) {
+      const reps = parseInt(intervalMatch[1]);
+      let distance = parseFloat(intervalMatch[2]);
+      const unit = intervalMatch[3].toLowerCase();
+
+      // Convert to km
+      if (unit === 'm' || unit === 'M') {
+        distance = distance / 1000;
+      } else if (unit === 'mi') {
+        distance = distance * 1.60934;
+      }
+
+      totalIntervals += reps;
+
+      segments.push({
+        type: 'interval',
+        distanceKm: distance,
+        repetitions: reps,
+        targetPaceMin: targetPaceMin,
+        targetPaceMax: targetPaceMin ? targetPaceMin + 0.25 : undefined // interval pace is tight range
+      });
+
+      // Check for recovery in the same part
+      const recoveryMatch = part.match(/\(?([\d.]+)\s*(m|km)\s*(rec|recovery|jog)\)?/i);
+      if (recoveryMatch) {
+        let recDistance = parseFloat(recoveryMatch[1]);
+        const recUnit = recoveryMatch[2].toLowerCase();
+        if (recUnit === 'm') {
+          recDistance = recDistance / 1000;
+        }
+        segments.push({
+          type: 'recovery',
+          distanceKm: recDistance,
+          repetitions: reps - 1, // n-1 recoveries between n intervals
+          targetPaceMin: targetPaceMax,
+          targetPaceMax: targetPaceMax ? targetPaceMax + 0.5 : undefined
+        });
+      }
+      continue;
+    }
+
+    // Check for distance + easy/warmup/cooldown pattern
+    const distanceMatch = part.match(/([\d.]+)\s*(km|m|mi)\s*(easy|warmup|warm-up|cooldown|cool-down|recovery)?/i);
+    if (distanceMatch) {
+      let distance = parseFloat(distanceMatch[1]);
+      const unit = distanceMatch[2].toLowerCase();
+      const intensityWord = (distanceMatch[3] || 'easy').toLowerCase();
+
+      if (unit === 'm') {
+        distance = distance / 1000;
+      } else if (unit === 'mi') {
+        distance = distance * 1.60934;
+      }
+
+      let segmentType: WorkoutSegment['type'] = 'easy';
+      if (intensityWord.includes('warm')) {
+        segmentType = 'warmup';
+      } else if (intensityWord.includes('cool')) {
+        segmentType = 'cooldown';
+      } else if (intensityWord.includes('recovery')) {
+        segmentType = 'recovery';
+      }
+
+      segments.push({
+        type: segmentType,
+        distanceKm: distance,
+        targetPaceMin: targetPaceMax,
+        targetPaceMax: targetPaceMax ? targetPaceMax + 0.5 : undefined
+      });
+    }
+  }
+
+  // For interval target pace:
+  // - min = target_pace_min (fast/interval pace)
+  // - max = either target_pace_max OR target_pace_min + 0.5 as fallback
+  // The range should allow some flexibility (usually 20-30 sec/km)
+  let intervalMin: number | undefined;
+  let intervalMax: number | undefined;
+
+  if (targetPaceMin && !isNaN(targetPaceMin)) {
+    intervalMin = targetPaceMin;
+    // Use target_pace_max if it exists and makes sense (should be slower than min)
+    // Otherwise use a reasonable range of +0.5 min/km (~30 sec)
+    if (targetPaceMax && !isNaN(targetPaceMax) && targetPaceMax > targetPaceMin) {
+      intervalMax = targetPaceMax;
+    } else {
+      intervalMax = targetPaceMin + 0.5; // 30 sec/km tolerance
+    }
+  }
+
+  return {
+    isStructured: segments.length > 0 && totalIntervals > 0,
+    workoutType,
+    segments,
+    totalIntervals,
+    intervalTargetPace: intervalMin ? { min: intervalMin, max: intervalMax! } : undefined,
+    easyTargetPace: targetPaceMax && !isNaN(targetPaceMax) ? { min: targetPaceMax - 0.5, max: targetPaceMax + 0.5 } : undefined
+  };
+}
+
+interface SplitSegmentMapping {
+  segment: WorkoutSegment;
+  splits: Array<{ km: number; paceMinKm: number; hr?: number }>;
+  avgPace: number;
+  paceVsTarget: 'on_target' | 'too_fast' | 'too_slow' | 'no_target';
+}
+
+/**
+ * Map actual splits to planned workout segments
+ * Uses distance-based matching to align splits with segments
+ */
+function mapSplitsToSegments(
+  processedSplits: any,
+  workoutStructure: ParsedWorkoutStructure
+): SplitSegmentMapping[] {
+  if (!processedSplits?.splits || !workoutStructure.isStructured) {
+    return [];
+  }
+
+  const splits = processedSplits.splits.map((s: any) => ({
+    km: s.km,
+    paceMinKm: s.pace_seconds_per_km / 60,
+    hr: s.avg_hr
+  }));
+
+  const mappings: SplitSegmentMapping[] = [];
+  let currentKm = 0;
+
+  for (const segment of workoutStructure.segments) {
+    const segmentSplits: typeof splits = [];
+    const segmentEndKm = currentKm + segment.distanceKm * (segment.repetitions || 1);
+
+    // Handle recovery segments that are interleaved
+    if (segment.type === 'recovery' && segment.repetitions) {
+      // Recovery splits are between intervals - harder to map precisely
+      // For now, we'll include them with the interval analysis
+      continue;
+    }
+
+    // Find splits that fall within this segment
+    for (const split of splits) {
+      if (split.km > currentKm && split.km <= segmentEndKm + 0.5) {
+        segmentSplits.push(split);
+      }
+    }
+
+    const avgPace = segmentSplits.length > 0
+      ? segmentSplits.reduce((sum, s) => sum + s.paceMinKm, 0) / segmentSplits.length
+      : 0;
+
+    let paceVsTarget: SplitSegmentMapping['paceVsTarget'] = 'no_target';
+    if (segment.targetPaceMin && segment.targetPaceMax && avgPace > 0) {
+      if (avgPace < segment.targetPaceMin - 0.1) {
+        paceVsTarget = 'too_fast';
+      } else if (avgPace > segment.targetPaceMax + 0.1) {
+        paceVsTarget = 'too_slow';
+      } else {
+        paceVsTarget = 'on_target';
+      }
+    }
+
+    mappings.push({
+      segment,
+      splits: segmentSplits,
+      avgPace,
+      paceVsTarget
+    });
+
+    currentKm = segmentEndKm;
+  }
+
+  return mappings;
+}
+
+/**
+ * Generate workout-structure-aware evaluation
+ */
+function evaluateWorkoutExecution(
+  processedSplits: any,
+  plannedWorkout: any
+): {
+  isStructuredWorkout: boolean;
+  structure: ParsedWorkoutStructure;
+  evaluation: string;
+  intervalExecution?: {
+    totalIntervals: number;
+    onTargetCount: number;
+    tooFastCount: number;
+    tooSlowCount: number;
+    avgIntervalPace: number;
+    targetPace: { min: number; max: number } | null;
+  };
+} {
+  const structure = parseWorkoutStructure(plannedWorkout);
+
+  if (!structure.isStructured || !processedSplits?.splits) {
+    return {
+      isStructuredWorkout: false,
+      structure,
+      evaluation: ''
+    };
+  }
+
+  const mappings = mapSplitsToSegments(processedSplits, structure);
+
+  // Analyze interval execution specifically
+  const intervalMappings = mappings.filter(m => m.segment.type === 'interval');
+  const easyMappings = mappings.filter(m =>
+    m.segment.type === 'warmup' || m.segment.type === 'cooldown' || m.segment.type === 'easy'
+  );
+
+  let intervalExecution = undefined;
+  if (intervalMappings.length > 0) {
+    let onTargetCount = 0;
+    let tooFastCount = 0;
+    let tooSlowCount = 0;
+
+    for (const mapping of intervalMappings) {
+      if (mapping.paceVsTarget === 'on_target') onTargetCount++;
+      else if (mapping.paceVsTarget === 'too_fast') tooFastCount++;
+      else if (mapping.paceVsTarget === 'too_slow') tooSlowCount++;
+    }
+
+    const avgIntervalPace = intervalMappings.reduce((sum, m) => sum + m.avgPace, 0) / intervalMappings.length;
+
+    intervalExecution = {
+      totalIntervals: structure.totalIntervals,
+      onTargetCount,
+      tooFastCount,
+      tooSlowCount,
+      avgIntervalPace,
+      targetPace: structure.intervalTargetPace || null
+    };
+  }
+
+  // Build evaluation string
+  const evaluationParts: string[] = [];
+
+  // Interval evaluation
+  if (intervalExecution && intervalExecution.targetPace) {
+    const targetPaceStr = `${Math.floor(intervalExecution.targetPace.min)}:${String(Math.round((intervalExecution.targetPace.min % 1) * 60)).padStart(2, '0')}-${Math.floor(intervalExecution.targetPace.max)}:${String(Math.round((intervalExecution.targetPace.max % 1) * 60)).padStart(2, '0')}/km`;
+    const actualPaceStr = `${Math.floor(intervalExecution.avgIntervalPace)}:${String(Math.round((intervalExecution.avgIntervalPace % 1) * 60)).padStart(2, '0')}/km`;
+
+    if (intervalExecution.avgIntervalPace < intervalExecution.targetPace.min - 0.1) {
+      evaluationParts.push(`Intervals ran FASTER than target (${actualPaceStr} vs ${targetPaceStr}) - great fitness but watch for overtraining.`);
+    } else if (intervalExecution.avgIntervalPace > intervalExecution.targetPace.max + 0.1) {
+      evaluationParts.push(`Intervals were SLOWER than target (${actualPaceStr} vs ${targetPaceStr}) - consider if fatigue or conditions affected performance.`);
+    } else {
+      evaluationParts.push(`Intervals executed ON TARGET (${actualPaceStr} within ${targetPaceStr}) - excellent pacing discipline!`);
+    }
+  }
+
+  // Easy section evaluation
+  if (easyMappings.length > 0 && structure.easyTargetPace) {
+    const avgEasyPace = easyMappings.reduce((sum, m) => sum + m.avgPace, 0) / easyMappings.length;
+    if (avgEasyPace < structure.easyTargetPace.min - 0.3) {
+      evaluationParts.push('Warm-up/cool-down sections were faster than prescribed - remember easy sections should be truly easy to maximize interval quality.');
+    }
+  }
+
+  return {
+    isStructuredWorkout: true,
+    structure,
+    evaluation: evaluationParts.join(' '),
+    intervalExecution
+  };
+}
+
+/**
+ * Analyze pacing from our computed processed_splits data
+ * This uses the accurate per-km data computed from Strava streams
+ */
+function analyzeProcessedSplits(processedSplits: any): DailyRunInsight['pacing'] {
+  const splits = processedSplits.splits;
+  const analysis = processedSplits.analysis;
+
+  if (!splits || splits.length < 2 || !analysis) {
+    return {
+      hasSplitsData: false,
+      paceDelta: 0,
+      consistency: 0,
+      splitAnalysis: {
+        fastestKm: { km: 1, pace: 0 },
+        slowestKm: { km: 1, pace: 0 }
+      }
+    };
+  }
+
+  // Convert pace_seconds_per_km to min/km decimal
+  const paces = splits.map((s: any) => ({
+    km: s.km,
+    pace: s.pace_seconds_per_km / 60 // Convert to minutes per km
+  })).filter((p: any) => p.pace > 0);
+
+  // Use pre-computed analysis values
+  const paceDelta = analysis.negative_split
+    ? Math.abs(analysis.pace_change_percent || 5) // Positive = got faster
+    : analysis.positive_split
+      ? -(Math.abs(analysis.pace_change_percent || 5)) // Negative = got slower
+      : 0;
+
+  return {
+    hasSplitsData: true,
+    paceDelta: Math.round(paceDelta * 10) / 10,
+    consistency: analysis.pace_consistency || 0,
+    splitAnalysis: {
+      fastestKm: analysis.fastest_km
+        ? { km: analysis.fastest_km.km, pace: analysis.fastest_km.pace_seconds / 60 }
+        : paces[0],
+      slowestKm: analysis.slowest_km
+        ? { km: analysis.slowest_km.km, pace: analysis.slowest_km.pace_seconds / 60 }
+        : paces[paces.length - 1],
+      fadePoint: analysis.fade_point_km || undefined
+    }
+  };
+}
+
+/**
+ * Analyze Pacing (fallback for Strava splits)
  *
  * NOTE: Strava API typically does not provide per-kilometer splits,
  * so this function will usually return default values.
@@ -448,7 +929,8 @@ function calculateEffortWithHRZones(
         target_distance_meters: plannedWorkout.target_distance_meters || plannedWorkout.distance_meters,
         target_pace_min: plannedWorkout.target_pace_min,
         target_pace_max: plannedWorkout.target_pace_max,
-        target_hr_zone: plannedWorkout.target_hr_zone
+        target_hr_zone: plannedWorkout.target_hr_zone,
+        workout_type: plannedWorkout.workout_type
       },
       {
         zone1Max: hrZones.zone1Max,
@@ -488,11 +970,12 @@ function checkCompliance(
   if (!plannedWorkout) {
     return {
       hadPlannedWorkout: false,
-      completedAsPlanned: false, // Changed from true - no plan means nothing to complete
+      completedAsPlanned: false,
       distanceDeviation: 0,
       paceDeviation: 0,
       hrZoneDeviation: 0,
-      modifications: []
+      modifications: [],
+      paceOnTarget: false
     };
   }
 
@@ -503,9 +986,36 @@ function checkCompliance(
     ? ((actualDistance - targetDistance) / targetDistance * 100)
     : 0;
 
-  const actualPace = speedToPace(activityData.average_speed);
-  const paceDeviation = plannedWorkout.target_pace_avg
-    ? ((actualPace - plannedWorkout.target_pace_avg) / plannedWorkout.target_pace_avg * 100)
+  // Calculate pace compliance using min/max range (not percentage deviation)
+  const actualPace = speedToPace(activityData.average_speed); // min/km
+  const targetPaceMin = plannedWorkout.target_pace_min; // min/km (faster)
+  const targetPaceMax = plannedWorkout.target_pace_max; // min/km (slower)
+
+  // Determine pace status: on_target, too_fast, too_slow
+  let paceOnTarget = false;
+  let paceStatus: 'on_target' | 'too_fast' | 'too_slow' | 'unknown' = 'unknown';
+
+  if (targetPaceMin || targetPaceMax) {
+    const effectiveMin = targetPaceMin || (targetPaceMax! - 0.5);
+    const effectiveMax = targetPaceMax || (targetPaceMin! + 0.5);
+
+    // Allow 3 seconds (0.05 min) tolerance
+    if (actualPace >= effectiveMin - 0.05 && actualPace <= effectiveMax + 0.05) {
+      paceOnTarget = true;
+      paceStatus = 'on_target';
+    } else if (actualPace < effectiveMin - 0.05) {
+      paceStatus = 'too_fast';
+    } else {
+      paceStatus = 'too_slow';
+    }
+  }
+
+  // Calculate pace deviation for display (percentage from target midpoint)
+  const targetPaceMid = (targetPaceMin && targetPaceMax)
+    ? (targetPaceMin + targetPaceMax) / 2
+    : targetPaceMin || targetPaceMax;
+  const paceDeviation = targetPaceMid
+    ? ((actualPace - targetPaceMid) / targetPaceMid * 100)
     : 0;
 
   // Calculate HR zone deviation (negative = too easy, positive = too hard)
@@ -514,17 +1024,23 @@ function checkCompliance(
     ? Math.round(actualZone) - targetZone
     : 0;
 
-  const completedAsPlanned =
-    Math.abs(distanceDeviation) < 10 &&
-    Math.abs(paceDeviation) < 10 &&
-    Math.abs(hrZoneDeviation) <= 1; // Allow 1 zone difference
+  // Completed as planned requires:
+  // - Distance within 10%
+  // - Pace WITHIN target range (not just percentage)
+  // - HR zone within 1 zone
+  const distanceOnTarget = Math.abs(distanceDeviation) < 10;
+  const hrOnTarget = Math.abs(hrZoneDeviation) <= 1;
+
+  const completedAsPlanned = distanceOnTarget && paceOnTarget && hrOnTarget;
 
   const modifications: string[] = [];
-  if (Math.abs(distanceDeviation) >= 10) {
+  if (!distanceOnTarget) {
     modifications.push(distanceDeviation > 0 ? 'Extended distance' : 'Shortened distance');
   }
-  if (Math.abs(paceDeviation) >= 10) {
-    modifications.push(paceDeviation > 0 ? 'Slowed pace' : 'Quickened pace');
+  if (paceStatus === 'too_slow') {
+    modifications.push('Pace too slow');
+  } else if (paceStatus === 'too_fast') {
+    modifications.push('Pace too fast');
   }
   if (Math.abs(hrZoneDeviation) >= 2) {
     const zoneDirection = hrZoneDeviation < 0 ? 'easier' : 'harder';
@@ -537,7 +1053,8 @@ function checkCompliance(
     distanceDeviation: Math.round(distanceDeviation * 10) / 10,
     paceDeviation: Math.round(paceDeviation * 10) / 10,
     hrZoneDeviation,
-    modifications
+    modifications,
+    paceOnTarget
   };
 }
 
@@ -913,12 +1430,30 @@ const PERSONALITY_MESSAGES = {
 };
 
 /**
+ * Workout Execution Evaluation Result Type
+ */
+interface WorkoutExecutionResult {
+  isStructuredWorkout: boolean;
+  structure: ParsedWorkoutStructure;
+  evaluation: string;
+  intervalExecution?: {
+    totalIntervals: number;
+    onTargetCount: number;
+    tooFastCount: number;
+    tooSlowCount: number;
+    avgIntervalPace: number;
+    targetPace: { min: number; max: number } | null;
+  };
+}
+
+/**
  * Generate Coaching Points
  *
  * Creates specific, actionable feedback adjusted to coach personality:
  * - Strengths (what went well)
  * - Improvements (what to address)
  * - Next workout adjustment (specific guidance)
+ * - Workout structure evaluation (for intervals, tempo, etc.)
  */
 function generateCoachingPoints(
   pacing: DailyRunInsight['pacing'],
@@ -926,7 +1461,8 @@ function generateCoachingPoints(
   effort: DailyRunInsight['effort'],
   compliance: DailyRunInsight['compliance'],
   _risks: DailyRunInsight['risks'],
-  coachStyle: CoachStyle = 'supportive'
+  coachStyle: CoachStyle = 'supportive',
+  workoutExecution?: WorkoutExecutionResult
 ): DailyRunInsight['coachingPoints'] {
   const strengths: string[] = [];
   const improvements: string[] = [];
@@ -934,47 +1470,126 @@ function generateCoachingPoints(
 
   const msg = PERSONALITY_MESSAGES;
 
-  // Identify strengths - ONLY when we have actual data to support the praise
+  // ===========================================================================
+  // STRUCTURED WORKOUT EVALUATION (intervals, tempo, etc.)
+  // This takes priority over generic pacing analysis for structured workouts
+  // ===========================================================================
+  if (workoutExecution?.isStructuredWorkout && workoutExecution.intervalExecution) {
+    const interval = workoutExecution.intervalExecution;
 
-  // Pacing strengths - only if we have splits data
-  if (pacing.hasSplitsData) {
-    if (pacing.paceDelta > 0) {
-      const delta = Math.abs(pacing.paceDelta).toFixed(1);
-      strengths.push(msg.negativeSplit[coachStyle](delta));
+    // Format pace helper
+    const formatPace = (paceMin: number): string => {
+      const mins = Math.floor(paceMin);
+      const secs = Math.round((paceMin % 1) * 60);
+      return `${mins}:${String(secs).padStart(2, '0')}/km`;
+    };
+
+    if (interval.targetPace) {
+      const targetRange = `${formatPace(interval.targetPace.min)}-${formatPace(interval.targetPace.max)}`;
+      const actualPace = formatPace(interval.avgIntervalPace);
+
+      // Evaluate interval execution
+      if (interval.avgIntervalPace >= interval.targetPace.min - 0.1 &&
+          interval.avgIntervalPace <= interval.targetPace.max + 0.1) {
+        // ON TARGET
+        const onTargetMsg = {
+          strict: `Intervals executed at ${actualPace} (target: ${targetRange}). This is the standard expected.`,
+          supportive: `Excellent interval execution! You hit ${actualPace} right in the target zone of ${targetRange}. Great pacing discipline!`,
+          analytical: `Interval pace ${actualPace} within target range ${targetRange}. Training stimulus delivered as prescribed.`,
+          motivational: `You nailed those intervals at ${actualPace}! That target of ${targetRange} didn't stand a chance!`
+        };
+        strengths.push(onTargetMsg[coachStyle]);
+      } else if (interval.avgIntervalPace < interval.targetPace.min - 0.1) {
+        // TOO FAST
+        const tooFastMsg = {
+          strict: `Intervals too fast at ${actualPace} (target: ${targetRange}). Save this energy for race day, not training.`,
+          supportive: `Your intervals were faster than planned (${actualPace} vs ${targetRange}) - great fitness! Just be mindful of recovery.`,
+          analytical: `Interval pace ${actualPace} exceeded target ${targetRange} by ${formatPace(interval.targetPace.min - interval.avgIntervalPace)}. Risk of accumulated fatigue.`,
+          motivational: `You're running hot! ${actualPace} when target was ${targetRange} shows great fitness - channel that for race day!`
+        };
+        improvements.push(tooFastMsg[coachStyle]);
+      } else {
+        // TOO SLOW
+        const tooSlowMsg = {
+          strict: `Intervals too slow at ${actualPace} (target: ${targetRange}). Hit your targets or there's no point.`,
+          supportive: `Your intervals came in at ${actualPace} (target: ${targetRange}) - conditions or fatigue may have played a role. Keep at it!`,
+          analytical: `Interval pace ${actualPace} below target ${targetRange}. Consider factors: fatigue, weather, or pace perception.`,
+          motivational: `Intervals at ${actualPace} were a bit off the ${targetRange} target - we'll nail it next time!`
+        };
+        improvements.push(tooSlowMsg[coachStyle]);
+        nextWorkoutAdjustment = {
+          strict: 'NEXT INTERVAL SESSION: Hit the prescribed paces. No excuses.',
+          supportive: 'For your next interval workout, try shorter recovery if you\'re feeling strong, or adjust expectations if fatigued.',
+          analytical: 'Recommendation: Review recent training load and sleep quality. Consider 5-10% intensity reduction if fatigued.',
+          motivational: 'Next time, start the first rep conservatively and build into the session - you\'ve got this!'
+        }[coachStyle];
+      }
+    } else {
+      // No target pace but structured workout
+      strengths.push(`Completed ${interval.totalIntervals} intervals successfully.`);
     }
-    if (pacing.consistency > 0.9) {
-      const score = (pacing.consistency * 100).toFixed(0);
-      strengths.push(msg.paceConsistency[coachStyle](score));
+
+    // Note: We don't add workoutExecution.evaluation separately since we already
+    // generated proper coaching messages above. The evaluation string is used
+    // internally for debugging/logging only.
+
+    // Skip generic pacing analysis for structured workouts - it's not relevant
+    // (consistency metrics don't apply to intentionally variable pace workouts)
+  } else {
+    // ===========================================================================
+    // GENERIC PACING ANALYSIS (for non-structured workouts)
+    // ===========================================================================
+
+    // Pacing strengths - only if we have splits data
+    if (pacing.hasSplitsData) {
+      if (pacing.paceDelta > 0) {
+        const delta = Math.abs(pacing.paceDelta).toFixed(1);
+        strengths.push(msg.negativeSplit[coachStyle](delta));
+      }
+      if (pacing.consistency > 0.9) {
+        const score = (pacing.consistency * 100).toFixed(0);
+        strengths.push(msg.paceConsistency[coachStyle](score));
+      }
+    }
+
+    // Pacing improvements - only if we have splits data
+    if (pacing.hasSplitsData) {
+      if (pacing.paceDelta < -5) {
+        const fadePercent = Math.abs(pacing.paceDelta).toFixed(1);
+        improvements.push(msg.paceFade[coachStyle](fadePercent));
+        nextWorkoutAdjustment = msg.fadeAdjustment[coachStyle];
+      }
+      if (pacing.consistency < 0.75) {
+        const score = (pacing.consistency * 100).toFixed(0);
+        improvements.push(msg.inconsistentPacing[coachStyle](score));
+      }
     }
   }
 
+  // ===========================================================================
+  // COMPLIANCE AND HR EVALUATION (applies to all workout types)
+  // ===========================================================================
+
   // Compliance strengths - only if there was a planned workout
   if (compliance.hadPlannedWorkout && compliance.completedAsPlanned) {
-    strengths.push(msg.completedAsPlanned[coachStyle]);
+    // Don't duplicate the "completed as planned" message if we already have structured workout feedback
+    if (!workoutExecution?.isStructuredWorkout) {
+      strengths.push(msg.completedAsPlanned[coachStyle]);
+    }
   }
 
   // HR strengths - only if we have HR data
   if (hrBehavior.hasData) {
-    if (hrBehavior.avgZone >= 1.8 && hrBehavior.avgZone <= 2.2 && effort.perceivedDifficulty === 'easy') {
+    // Don't praise Zone 2 execution for interval/tempo workouts - they're supposed to be hard!
+    const hardWorkoutTypes = ['intervals', 'interval', 'tempo', 'speed', 'race'];
+    const isHardWorkout = workoutExecution?.isStructuredWorkout &&
+      hardWorkoutTypes.includes(workoutExecution.structure.workoutType.toLowerCase());
+    if (hrBehavior.avgZone >= 1.8 && hrBehavior.avgZone <= 2.2 && effort.perceivedDifficulty === 'easy' && !isHardWorkout) {
       strengths.push(msg.perfectZone2[coachStyle]);
     }
+    // HR control praise is fine for any workout type
     if (hrBehavior.driftRate < 2 && hrBehavior.driftRate >= 0) {
       strengths.push(msg.hrControl[coachStyle]);
-    }
-  }
-
-  // Identify improvements - only when we have actual data
-
-  // Pacing improvements - only if we have splits data
-  if (pacing.hasSplitsData) {
-    if (pacing.paceDelta < -5) {
-      const fadePercent = Math.abs(pacing.paceDelta).toFixed(1);
-      improvements.push(msg.paceFade[coachStyle](fadePercent));
-      nextWorkoutAdjustment = msg.fadeAdjustment[coachStyle];
-    }
-    if (pacing.consistency < 0.75) {
-      const score = (pacing.consistency * 100).toFixed(0);
-      improvements.push(msg.inconsistentPacing[coachStyle](score));
     }
   }
 
@@ -982,7 +1597,9 @@ function generateCoachingPoints(
   if (hrBehavior.hasData) {
     if (hrBehavior.effortMismatch) {
       improvements.push(msg.effortMismatch[coachStyle]);
-      nextWorkoutAdjustment = msg.hrAdjustment[coachStyle];
+      if (!nextWorkoutAdjustment) {
+        nextWorkoutAdjustment = msg.hrAdjustment[coachStyle];
+      }
     }
     if (hrBehavior.driftRate > 5) {
       const drift = hrBehavior.driftRate.toFixed(1);
@@ -993,8 +1610,11 @@ function generateCoachingPoints(
   // Compliance improvements - only if there was a planned workout
   if (compliance.hadPlannedWorkout) {
     if (!compliance.completedAsPlanned && compliance.modifications.length > 0) {
-      const mods = compliance.modifications.join(', ');
-      improvements.push(msg.modifiedWorkout[coachStyle](mods));
+      // For structured workouts, don't complain about pace deviation (it's intentional)
+      if (!workoutExecution?.isStructuredWorkout) {
+        const mods = compliance.modifications.join(', ');
+        improvements.push(msg.modifiedWorkout[coachStyle](mods));
+      }
     }
 
     // Check for HR zone deviation from target - only if we have HR data
@@ -1075,6 +1695,7 @@ export async function recomputeDailyInsight(
     const activity = activityResult.rows[0];
 
     // Convert stored activity to the format expected by computeDailyInsight
+    // Prefer our processed_splits over Strava's splits_metric when available
     const activityData = {
       id: activity.strava_activity_id,
       distance: activity.distance_meters,
@@ -1085,7 +1706,9 @@ export async function recomputeDailyInsight(
       start_date: activity.start_date,
       type: activity.sport_type,
       splits_metric: activity.splits_metric,
-      splits: activity.splits_metric || activity.splits_standard
+      splits: activity.splits_metric || activity.splits_standard,
+      // Use our processed splits if available (computed from Strava streams)
+      processed_splits: activity.processed_splits
     };
 
     // Fetch linked planned workout (if any)

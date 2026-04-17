@@ -1,9 +1,10 @@
 import { Request, Response } from 'express';
 import { getActivitiesByUserId, getActivityStats, getActivityByIdForUser, getActivityInsights, getLinkedPlannedWorkout } from '../models/Activity';
-import { syncActivities } from '../services/activityService';
+import { syncActivities, relinkActivitiesToWorkouts } from '../services/activityService';
 import { getHRZoneSummary } from '../models/ActivityHRZone';
-import { getActivityZones } from '../services/stravaService';
+import { getActivityZones, getActivityStreamsForAnalysis } from '../services/stravaService';
 import { recomputeDailyInsight } from '../services/dailyInsightService';
+import { processStreamsIntoSplits, ProcessedSplitsResult } from '../services/splitBucketingService';
 import { query } from '../config/database';
 
 export async function getActivities(req: Request, res: Response): Promise<void> {
@@ -332,4 +333,190 @@ function isCurrentWeek(weekStart: Date, weekStartsOn: 'sunday' | 'monday' = 'mon
   weekStartNormalized.setHours(0, 0, 0, 0);
 
   return weekStartNormalized.getTime() === currentWeekStart.getTime();
+}
+
+/**
+ * Re-link activities to planned workouts using correct local dates.
+ * This repairs data that may have been incorrectly linked due to timezone issues.
+ */
+export async function relinkActivitiesController(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    const result = await relinkActivitiesToWorkouts(userId);
+
+    res.json({
+      message: 'Activity re-linking complete',
+      ...result,
+    });
+  } catch (error) {
+    console.error('Re-link activities error:', error);
+    res.status(500).json({ error: 'Failed to re-link activities' });
+  }
+}
+
+/**
+ * Get processed splits with per-km HR analysis
+ * Will compute and cache if not already processed
+ */
+export async function getProcessedSplits(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    const activityId = parseInt(req.params.id);
+    const forceRecompute = req.query.recompute === 'true';
+
+    if (!activityId || isNaN(activityId)) {
+      res.status(400).json({ error: 'Invalid activity ID' });
+      return;
+    }
+
+    // Verify activity belongs to user and get Strava ID
+    const activityResult = await query(
+      `SELECT id, strava_activity_id, processed_splits, splits_processed_at
+       FROM activities
+       WHERE id = $1 AND user_id = $2`,
+      [activityId, userId]
+    );
+
+    if (activityResult.rows.length === 0) {
+      res.status(404).json({ error: 'Activity not found' });
+      return;
+    }
+
+    const activity = activityResult.rows[0];
+
+    // Return cached splits if available and not forcing recompute
+    if (activity.processed_splits && !forceRecompute) {
+      res.json({
+        cached: true,
+        processed_at: activity.splits_processed_at,
+        ...activity.processed_splits,
+      });
+      return;
+    }
+
+    // Fetch streams from Strava and process
+    console.log(`🏃 Processing splits for activity ${activityId} (Strava ID: ${activity.strava_activity_id})`);
+
+    const streams = await getActivityStreamsForAnalysis(userId, activity.strava_activity_id);
+
+    if (!streams.distance?.data || !streams.time?.data) {
+      res.status(404).json({
+        error: 'Stream data not available for this activity',
+        message: 'This activity may not have detailed GPS/stream data from Strava',
+      });
+      return;
+    }
+
+    const processedSplits = await processStreamsIntoSplits(userId, activityId, streams);
+
+    if (!processedSplits) {
+      res.status(500).json({ error: 'Failed to process splits' });
+      return;
+    }
+
+    // Cache the processed splits
+    await query(
+      `UPDATE activities
+       SET processed_splits = $1, splits_processed_at = NOW()
+       WHERE id = $2`,
+      [JSON.stringify(processedSplits), activityId]
+    );
+
+    console.log(`✅ Processed ${processedSplits.splits.length} splits for activity ${activityId}`);
+
+    res.json({
+      cached: false,
+      processed_at: new Date().toISOString(),
+      ...processedSplits,
+    });
+  } catch (error: any) {
+    console.error('Get processed splits error:', error);
+    res.status(500).json({ error: 'Failed to get processed splits', details: error.message });
+  }
+}
+
+/**
+ * Batch process splits for multiple activities
+ * Useful for backfilling historical activities
+ */
+export async function batchProcessSplits(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    const { activityIds, limit = 10 } = req.body;
+
+    let activitiesToProcess: any[];
+
+    if (activityIds && Array.isArray(activityIds)) {
+      // Process specific activities
+      const result = await query(
+        `SELECT id, strava_activity_id
+         FROM activities
+         WHERE id = ANY($1) AND user_id = $2 AND processed_splits IS NULL`,
+        [activityIds, userId]
+      );
+      activitiesToProcess = result.rows;
+    } else {
+      // Process recent unprocessed activities
+      const result = await query(
+        `SELECT id, strava_activity_id
+         FROM activities
+         WHERE user_id = $1
+           AND processed_splits IS NULL
+           AND distance_meters > 1000
+         ORDER BY start_date DESC
+         LIMIT $2`,
+        [userId, limit]
+      );
+      activitiesToProcess = result.rows;
+    }
+
+    let processed = 0;
+    let failed = 0;
+    const results: { id: number; success: boolean; splits?: number; error?: string }[] = [];
+
+    for (const activity of activitiesToProcess) {
+      try {
+        const streams = await getActivityStreamsForAnalysis(userId, activity.strava_activity_id);
+
+        if (streams.distance?.data && streams.time?.data) {
+          const processedSplits = await processStreamsIntoSplits(userId, activity.id, streams);
+
+          if (processedSplits) {
+            await query(
+              `UPDATE activities
+               SET processed_splits = $1, splits_processed_at = NOW()
+               WHERE id = $2`,
+              [JSON.stringify(processedSplits), activity.id]
+            );
+
+            processed++;
+            results.push({ id: activity.id, success: true, splits: processedSplits.splits.length });
+          } else {
+            failed++;
+            results.push({ id: activity.id, success: false, error: 'Processing returned null' });
+          }
+        } else {
+          failed++;
+          results.push({ id: activity.id, success: false, error: 'No stream data available' });
+        }
+      } catch (error: any) {
+        failed++;
+        results.push({ id: activity.id, success: false, error: error.message });
+      }
+
+      // Small delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    res.json({
+      message: `Processed ${processed} activities, ${failed} failed`,
+      processed,
+      failed,
+      total: activitiesToProcess.length,
+      results,
+    });
+  } catch (error: any) {
+    console.error('Batch process splits error:', error);
+    res.status(500).json({ error: 'Failed to batch process splits', details: error.message });
+  }
 }

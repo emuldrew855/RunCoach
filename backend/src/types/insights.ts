@@ -109,13 +109,16 @@ export interface DailyRunInsight {
     /** % deviation from planned distance */
     distanceDeviation: number;
 
-    /** % deviation from planned pace */
+    /** % deviation from planned pace (for display purposes) */
     paceDeviation: number;
+
+    /** True if actual pace was within target min/max range */
+    paceOnTarget?: boolean;
 
     /** Zones difference from target HR zone (negative = easier, positive = harder) */
     hrZoneDeviation?: number;
 
-    /** List of modifications made (e.g., "Shortened distance", "Slowed pace") */
+    /** List of modifications made (e.g., "Pace too slow", "Extended distance") */
     modifications: string[];
   };
 

@@ -13,12 +13,56 @@ interface ExecutionScoreCardProps {
   score: number;
   difficulty: 'easy' | 'moderate' | 'hard' | 'very_hard';
   paceAppropriate: boolean;
+  hrZoneCompliance?: number; // Actual avg HR zone
+  targetZone?: number; // Target HR zone from planned workout
 }
+
+// Generate a natural language explanation of the score for beginners
+const getScoreExplanation = (
+  score: number,
+  paceAppropriate: boolean,
+  hrZoneCompliance?: number,
+  targetZone?: number
+): string => {
+  const parts: string[] = [];
+
+  if (score >= 85) {
+    parts.push('Great execution!');
+    if (paceAppropriate) {
+      parts.push('You nailed your target pace.');
+    }
+    if (hrZoneCompliance && targetZone && Math.abs(hrZoneCompliance - targetZone) <= 1) {
+      parts.push('Heart rate stayed in the right zone.');
+    }
+  } else if (score >= 70) {
+    parts.push('Solid effort!');
+    if (!paceAppropriate) {
+      parts.push('Pace was slightly off target.');
+    } else if (hrZoneCompliance && targetZone && hrZoneCompliance > targetZone) {
+      parts.push('You pushed a bit harder than planned.');
+    }
+  } else if (score >= 50) {
+    if (!paceAppropriate) {
+      parts.push('Pace differed from the plan.');
+    }
+    if (hrZoneCompliance && targetZone && hrZoneCompliance > targetZone + 1) {
+      parts.push('Effort was higher than intended.');
+    }
+    parts.push('Consider adjusting next time.');
+  } else {
+    parts.push('This run deviated significantly from the plan.');
+    parts.push('No worries — use this as a learning opportunity.');
+  }
+
+  return parts.join(' ');
+};
 
 export const ExecutionScoreCard: React.FC<ExecutionScoreCardProps> = ({
   score,
   difficulty,
   paceAppropriate,
+  hrZoneCompliance,
+  targetZone,
 }) => {
   // Determine score category
   const getScoreConfig = (score: number) => {
@@ -124,6 +168,11 @@ export const ExecutionScoreCard: React.FC<ExecutionScoreCardProps> = ({
           </svg>
         </div>
       </div>
+
+      {/* Natural Language Explanation - helps beginners understand the "why" */}
+      <p className="text-sm text-secondary text-center mb-4 px-2">
+        {getScoreExplanation(score, paceAppropriate, hrZoneCompliance, targetZone)}
+      </p>
 
       {/* Metrics */}
       <div className="grid grid-cols-2 gap-3">

@@ -20,7 +20,17 @@ interface ComplianceProps {
     target_pace_min?: number;
     target_pace_max?: number;
   } | null;
+  // Actual activity values for context
+  actualDistanceMeters?: number;
+  actualPaceSecondsPerKm?: number;
 }
+
+// Format pace from seconds to M:SS string
+const formatPace = (secondsPerKm: number): string => {
+  const minutes = Math.floor(secondsPerKm / 60);
+  const seconds = Math.round(secondsPerKm % 60);
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+};
 
 export const ComplianceCard: React.FC<ComplianceProps> = ({
   completedAsPlanned,
@@ -28,10 +38,67 @@ export const ComplianceCard: React.FC<ComplianceProps> = ({
   paceDeviation,
   modifications,
   plannedWorkout,
+  actualDistanceMeters,
+  actualPaceSecondsPerKm,
 }) => {
-  // Status configuration
+  // Get planned and actual values for display (must be defined first for status config)
+  const getDistanceValues = () => {
+    const planned = plannedWorkout?.target_distance_meters
+      ? (plannedWorkout.target_distance_meters / 1000).toFixed(1)
+      : null;
+    const actual = actualDistanceMeters
+      ? (actualDistanceMeters / 1000).toFixed(1)
+      : null;
+    return { planned, actual, unit: 'km' };
+  };
+
+  const getPaceValues = () => {
+    // Show target pace range if available
+    const targetMin = plannedWorkout?.target_pace_min; // min/km (faster pace = lower number)
+    const targetMax = plannedWorkout?.target_pace_max; // min/km (slower pace = higher number)
+    let planned: string | null = null;
+
+    if (targetMin && targetMax && targetMin !== targetMax) {
+      planned = `${formatPace(targetMin * 60)} - ${formatPace(targetMax * 60)}`;
+    } else if (targetMin) {
+      planned = formatPace(targetMin * 60);
+    } else if (targetMax) {
+      planned = formatPace(targetMax * 60);
+    }
+
+    const actual = actualPaceSecondsPerKm
+      ? formatPace(actualPaceSecondsPerKm)
+      : null;
+
+    // Determine if pace is within target range
+    let paceStatus: 'on_target' | 'too_fast' | 'too_slow' | 'unknown' = 'unknown';
+    if (actualPaceSecondsPerKm && (targetMin || targetMax)) {
+      const actualPaceMinKm = actualPaceSecondsPerKm / 60; // Convert to min/km
+      const effectiveMin = targetMin || (targetMax! - 0.5);
+      const effectiveMax = targetMax || (targetMin! + 0.5);
+
+      if (actualPaceMinKm >= effectiveMin - 0.05 && actualPaceMinKm <= effectiveMax + 0.05) {
+        paceStatus = 'on_target'; // Within range (with 3 sec tolerance)
+      } else if (actualPaceMinKm < effectiveMin - 0.05) {
+        paceStatus = 'too_fast'; // Faster than target (lower pace number)
+      } else {
+        paceStatus = 'too_slow'; // Slower than target (higher pace number)
+      }
+    }
+
+    return { planned, actual, unit: '/km', paceStatus };
+  };
+
+  const distanceValues = getDistanceValues();
+  const paceValues = getPaceValues();
+
+  // Status configuration - use actual pace comparison, not just percentage
   const getStatusConfig = () => {
-    if (completedAsPlanned) {
+    const paceStatus = paceValues.paceStatus;
+    const distanceOnTarget = Math.abs(distanceDeviation) <= 10;
+
+    // Both distance and pace on target
+    if (distanceOnTarget && paceStatus === 'on_target') {
       return {
         label: 'Met',
         icon: CheckCircle,
@@ -40,7 +107,10 @@ export const ComplianceCard: React.FC<ComplianceProps> = ({
         borderColor: 'border-green-500',
       };
     }
-    if (Math.abs(distanceDeviation) < 15 && Math.abs(paceDeviation) < 15) {
+
+    // Close - either distance or pace slightly off
+    if ((distanceOnTarget || Math.abs(distanceDeviation) <= 15) &&
+        (paceStatus === 'on_target' || paceStatus === 'too_fast' || paceStatus === 'unknown')) {
       return {
         label: 'Close',
         icon: AlertTriangle,
@@ -49,6 +119,8 @@ export const ComplianceCard: React.FC<ComplianceProps> = ({
         borderColor: 'border-amber-500',
       };
     }
+
+    // Missed - pace too slow or significant distance deviation
     return {
       label: 'Missed',
       icon: XCircle,
@@ -61,36 +133,88 @@ export const ComplianceCard: React.FC<ComplianceProps> = ({
   const statusConfig = getStatusConfig();
   const StatusIcon = statusConfig.icon;
 
-  // Deviation indicator
-  const DeviationIndicator: React.FC<{ value: number; label: string }> = ({ value, label }) => {
+  // Deviation indicator with actual vs planned context
+  const DeviationIndicator: React.FC<{
+    value: number;
+    label: string;
+    actual?: string | null;
+    planned?: string | null;
+    unit?: string;
+    // For pace, use explicit status instead of percentage
+    explicitStatus?: 'on_target' | 'too_fast' | 'too_slow' | 'unknown';
+  }> = ({ value, label, actual, planned, unit = '', explicitStatus }) => {
     const isOver = value > 0;
-    const isUnder = value < 0;
     const absValue = Math.abs(value);
 
     let color = 'text-green-600 dark:text-green-400';
-    let Icon = Minus;
+    let Icon = CheckCircle;
+    let statusText = 'On target';
 
-    if (absValue > 10) {
-      color = 'text-amber-600 dark:text-amber-400';
-      Icon = isOver ? ArrowUp : ArrowDown;
-    }
-    if (absValue > 20) {
-      color = 'text-red-600 dark:text-red-400';
-    }
-    if (absValue <= 5) {
-      color = 'text-green-600 dark:text-green-400';
-      Icon = CheckCircle;
+    // Use explicit status for pace comparisons (more accurate than %)
+    if (explicitStatus) {
+      if (explicitStatus === 'on_target') {
+        color = 'text-green-600 dark:text-green-400';
+        Icon = CheckCircle;
+        statusText = 'On target';
+      } else if (explicitStatus === 'too_fast') {
+        color = 'text-amber-600 dark:text-amber-400';
+        Icon = ArrowUp;
+        statusText = 'Too fast';
+      } else if (explicitStatus === 'too_slow') {
+        color = 'text-red-600 dark:text-red-400';
+        Icon = ArrowDown;
+        statusText = 'Too slow';
+      } else {
+        color = 'text-neutral-500';
+        Icon = Minus;
+        statusText = 'No target';
+      }
+    } else {
+      // Use percentage-based status for distance
+      if (absValue > 20) {
+        color = 'text-red-600 dark:text-red-400';
+        Icon = isOver ? ArrowUp : ArrowDown;
+        statusText = isOver ? 'Well over' : 'Well under';
+      } else if (absValue > 10) {
+        color = 'text-amber-600 dark:text-amber-400';
+        Icon = isOver ? ArrowUp : ArrowDown;
+        statusText = isOver ? 'Over target' : 'Under target';
+      } else {
+        color = 'text-green-600 dark:text-green-400';
+        Icon = CheckCircle;
+        statusText = 'On target';
+      }
     }
 
     return (
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-secondary">{label}</span>
-        <div className="flex items-center gap-1">
-          <Icon className={`w-4 h-4 ${color}`} />
-          <span className={`text-sm font-semibold ${color}`}>
-            {isOver ? '+' : ''}{value.toFixed(1)}%
-          </span>
+      <div className="bg-neutral-50 dark:bg-neutral-800/50 rounded-lg p-3">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs text-secondary uppercase tracking-wide">{label}</span>
+          <div className="flex items-center gap-1">
+            <Icon className={`w-3.5 h-3.5 ${color}`} />
+            <span className={`text-xs font-medium ${color}`}>{statusText}</span>
+          </div>
         </div>
+        {actual && planned ? (
+          <div className="flex items-baseline justify-between">
+            <div>
+              <span className="text-lg font-bold text-neutral-900 dark:text-neutral-100">
+                {actual}
+              </span>
+              <span className="text-xs text-secondary ml-1">{unit}</span>
+            </div>
+            <div className="text-right">
+              <span className="text-xs text-secondary">vs </span>
+              <span className="text-sm text-secondary">{planned}{unit}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1">
+            <span className={`text-lg font-semibold ${color}`}>
+              {isOver ? '+' : ''}{value.toFixed(1)}%
+            </span>
+          </div>
+        )}
       </div>
     );
   };
@@ -154,10 +278,23 @@ export const ComplianceCard: React.FC<ComplianceProps> = ({
         </div>
       )}
 
-      {/* Deviations */}
+      {/* Deviations - now with actual vs planned context */}
       <div className="space-y-3">
-        <DeviationIndicator value={distanceDeviation} label="Distance" />
-        <DeviationIndicator value={paceDeviation} label="Pace" />
+        <DeviationIndicator
+          value={distanceDeviation}
+          label="Distance"
+          actual={distanceValues.actual}
+          planned={distanceValues.planned}
+          unit={distanceValues.unit}
+        />
+        <DeviationIndicator
+          value={paceDeviation}
+          label="Pace"
+          actual={paceValues.actual}
+          planned={paceValues.planned}
+          unit={paceValues.unit}
+          explicitStatus={paceValues.paceStatus}
+        />
       </div>
 
       {/* Modifications */}
@@ -177,8 +314,8 @@ export const ComplianceCard: React.FC<ComplianceProps> = ({
         </div>
       )}
 
-      {/* Success Message */}
-      {completedAsPlanned && (
+      {/* Success Message - only show if actually on target */}
+      {statusConfig.label === 'Met' && (
         <div className="mt-4 pt-3 border-t border-neutral-200 dark:border-neutral-700">
           <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
             <CheckCircle className="w-4 h-4" />

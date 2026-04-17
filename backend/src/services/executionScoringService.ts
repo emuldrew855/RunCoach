@@ -47,6 +47,9 @@ export interface WeeklyExecutionSummary {
 
 /**
  * Calculate execution score for a single workout/activity pair
+ *
+ * For interval/tempo workouts: Pace compliance is CRITICAL (50% weight)
+ * For easy/recovery workouts: Distance and HR are more important
  */
 export function calculateExecutionScore(
   activity: {
@@ -60,6 +63,7 @@ export function calculateExecutionScore(
     target_pace_min?: number;
     target_pace_max?: number;
     target_hr_zone?: number;
+    workout_type?: string;
   },
   hrZones: {
     zone1Max: number;
@@ -69,6 +73,11 @@ export function calculateExecutionScore(
   },
   pacingConsistency: number = 1.0
 ): ExecutionScore {
+  // Determine if this is a hard/quality workout where pace is critical
+  const hardWorkoutTypes = ['intervals', 'interval', 'tempo', 'speed', 'race', 'threshold'];
+  const isHardWorkout = plannedWorkout.workout_type
+    ? hardWorkoutTypes.includes(plannedWorkout.workout_type.toLowerCase())
+    : false;
   let paceScore = 100;
   let distanceScore = 100;
   let hrScore = 100;
@@ -92,24 +101,46 @@ export function calculateExecutionScore(
   }
 
   // Pace compliance (40% weight)
-  if (plannedWorkout.target_pace_min && plannedWorkout.target_pace_max && activity.average_speed > 0) {
+  // Handle cases where only one pace target exists
+  const hasValidPaceTargets = (plannedWorkout.target_pace_min && !isNaN(plannedWorkout.target_pace_min)) ||
+                               (plannedWorkout.target_pace_max && !isNaN(plannedWorkout.target_pace_max));
+
+  if (hasValidPaceTargets && activity.average_speed > 0) {
     const actualPace = 1000 / (activity.average_speed * 60); // Convert m/s to min/km
-    const targetMin = plannedWorkout.target_pace_min;
-    const targetMax = plannedWorkout.target_pace_max;
-    const targetMid = (targetMin + targetMax) / 2;
-    const targetRange = targetMax - targetMin;
+
+    // Use available targets, defaulting to reasonable ranges if one is missing
+    const targetMin = (plannedWorkout.target_pace_min && !isNaN(plannedWorkout.target_pace_min))
+      ? plannedWorkout.target_pace_min
+      : (plannedWorkout.target_pace_max! - 0.5); // If only max exists, assume min is 30s faster
+
+    const targetMax = (plannedWorkout.target_pace_max && !isNaN(plannedWorkout.target_pace_max))
+      ? plannedWorkout.target_pace_max
+      : (plannedWorkout.target_pace_min! + 0.5); // If only min exists, assume max is 30s slower
+
+    const targetRange = Math.max(targetMax - targetMin, 0.25); // Minimum 15 sec range
 
     if (actualPace >= targetMin && actualPace <= targetMax) {
       // Perfect - within target range
       paceScore = 100;
     } else if (actualPace < targetMin) {
-      // Too fast
+      // Too fast - for easy runs this is bad, for intervals it's less bad
       const deviation = (targetMin - actualPace) / targetRange;
-      paceScore = Math.max(0, 100 - deviation * 50);
+      paceScore = Math.max(0, 100 - deviation * 40);
     } else {
-      // Too slow
+      // Too slow - more heavily penalized
       const deviation = (actualPace - targetMax) / targetRange;
-      paceScore = Math.max(0, 100 - deviation * 50);
+      paceScore = Math.max(0, 100 - deviation * 60);
+    }
+  } else {
+    // No pace targets available
+    if (isHardWorkout) {
+      // For hard workouts, missing pace targets is a critical data issue
+      // We can't properly evaluate an interval/tempo workout without pace targets
+      // Set score to -2 to indicate "missing critical data for this workout type"
+      paceScore = -2; // Critical: hard workout missing pace targets
+    } else {
+      // For easy/recovery runs, missing pace targets is less critical
+      paceScore = -1; // Marker for "no data"
     }
   }
 
@@ -139,12 +170,47 @@ export function calculateExecutionScore(
   }
 
   // Calculate overall score with weights
-  const overall = Math.round(
-    paceScore * 0.4 +
-    distanceScore * 0.3 +
-    hrScore * 0.2 +
-    consistencyScore * 0.1
-  );
+  // Different weights based on workout type and data availability
+  let overall: number;
+  let scoringNote = '';
+
+  if (paceScore === -2) {
+    // CRITICAL: Hard workout missing pace targets - cannot properly evaluate
+    // Apply a significant penalty since we can't verify the most important aspect
+    overall = Math.round(
+      distanceScore * 0.35 +
+      hrScore * 0.35 +
+      consistencyScore * 0.10
+    );
+    // Cap at 70% max since we couldn't verify pace execution for a hard workout
+    overall = Math.min(overall, 70);
+    scoringNote = 'Missing pace targets for interval/tempo workout';
+    paceScore = 0; // Reset for display
+  } else if (paceScore === -1) {
+    // Easy/recovery workout with no pace targets - less critical
+    overall = Math.round(
+      distanceScore * 0.5 +
+      hrScore * 0.35 +
+      consistencyScore * 0.15
+    );
+    paceScore = 0; // Reset for display purposes
+  } else if (isHardWorkout) {
+    // Hard workout with pace targets - pace is CRITICAL (50% weight)
+    overall = Math.round(
+      paceScore * 0.50 +       // Pace is most important for intervals/tempo
+      distanceScore * 0.20 +
+      hrScore * 0.20 +
+      consistencyScore * 0.10
+    );
+  } else {
+    // Easy/recovery workout with pace targets - standard weighting
+    overall = Math.round(
+      paceScore * 0.30 +       // Less important for easy runs
+      distanceScore * 0.30 +
+      hrScore * 0.30 +         // HR zone is important for easy runs
+      consistencyScore * 0.10
+    );
+  }
 
   // Determine status
   let status: ExecutionScore['status'];
@@ -155,23 +221,29 @@ export function calculateExecutionScore(
 
   // Generate summary
   let summary = '';
+
+  // Add scoring note if applicable
+  if (scoringNote) {
+    summary = scoringNote + '. ';
+  }
+
   if (status === 'excellent') {
-    summary = 'Workout executed as planned';
+    summary += 'Workout executed as planned';
   } else if (status === 'good') {
     const issues: string[] = [];
-    if (paceScore < 80) issues.push('pace slightly off target');
+    if (paceScore < 80 && paceScore > 0) issues.push('pace slightly off target');
     if (distanceScore < 80) issues.push('distance deviation');
     if (hrScore < 80) issues.push('HR in adjacent zone');
-    summary = issues.length > 0 ? `Minor issues: ${issues.join(', ')}` : 'Good execution overall';
+    summary += issues.length > 0 ? `Minor issues: ${issues.join(', ')}` : 'Good execution overall';
   } else if (status === 'fair') {
     const issues: string[] = [];
     if (paceScore < 70) issues.push('pace significantly off');
     if (distanceScore < 70) issues.push('distance significantly off');
     if (hrScore < 70) issues.push('HR mismatch');
     if (consistencyScore < 70) issues.push('inconsistent pacing');
-    summary = issues.join(', ');
+    summary += issues.length > 0 ? issues.join(', ') : 'Fair execution';
   } else {
-    summary = 'Significant deviations from plan';
+    summary += 'Significant deviations from plan';
   }
 
   return {

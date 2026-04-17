@@ -16,6 +16,8 @@ import { ChartSpecRenderer, extractChartSpecs, removeChartSpecs } from './charts
 interface CommandCenterMessageProps {
   message: ChatMessage;
   conversationTitle?: string;
+  /** Skip rendering charts - useful when charts are already visible on the page (e.g., Activity Detail) */
+  skipCharts?: boolean;
 }
 
 function formatTimestamp(dateString: string): string {
@@ -41,7 +43,7 @@ function formatTimestamp(dateString: string): string {
   return `${dateStr}, ${timeStr}`;
 }
 
-export function CommandCenterMessage({ message, conversationTitle }: CommandCenterMessageProps) {
+export function CommandCenterMessage({ message, conversationTitle, skipCharts = false }: CommandCenterMessageProps) {
   const { buildMetrics } = useInsightMetrics();
   if (message.role === 'user') {
     return (
@@ -97,12 +99,13 @@ export function CommandCenterMessage({ message, conversationTitle }: CommandCent
             </ReactMarkdown>
           </div>
 
-          {/* Render charts from specifications */}
-          {chartSpecs.map((spec) => (
+          {/* Render charts from specifications - skip if charts are already visible on page */}
+          {!skipCharts && chartSpecs.map((spec) => (
             <ChartSpecRenderer key={spec.id} chartSpec={spec} />
           ))}
 
-          <InsightCards metrics={metrics} />
+          {/* Skip insight cards on activity detail page to avoid redundant visualizations */}
+          {!skipCharts && <InsightCards metrics={metrics} />}
           <ActionChips
             messageContent={message.content}
             conversationTitle={conversationTitle}

@@ -84,14 +84,28 @@ export async function getStravaActivities(
 }
 
 /**
+ * Stream data types from Strava API
+ */
+export interface ActivityStreamData {
+  time?: { data: number[] };           // Seconds elapsed
+  heartrate?: { data: number[] };      // BPM at each point
+  distance?: { data: number[] };       // Meters from start
+  altitude?: { data: number[] };       // Meters elevation
+  velocity_smooth?: { data: number[] }; // Smoothed velocity in m/s
+  cadence?: { data: number[] };        // Steps per minute
+  watts?: { data: number[] };          // Power (if available)
+  grade_smooth?: { data: number[] };   // Grade/gradient %
+}
+
+/**
  * Get activity streams (detailed data like HR over time)
- * Available stream types: time, heartrate, distance, altitude, velocity_smooth, etc.
+ * Available stream types: time, heartrate, distance, altitude, velocity_smooth, cadence, watts, grade_smooth
  */
 export async function getActivityStreams(
   userId: number,
   activityId: number,
   streamTypes: string[] = ['time', 'heartrate']
-): Promise<{ time?: { data: number[] }; heartrate?: { data: number[] } }> {
+): Promise<ActivityStreamData> {
   const accessToken = await refreshStravaToken(userId);
 
   try {
@@ -111,6 +125,25 @@ export async function getActivityStreams(
     }
     throw error;
   }
+}
+
+/**
+ * Get comprehensive activity streams for per-km analysis
+ * Fetches all streams needed for detailed split bucketing with HR correlation
+ */
+export async function getActivityStreamsForAnalysis(
+  userId: number,
+  activityId: number
+): Promise<ActivityStreamData> {
+  return getActivityStreams(userId, activityId, [
+    'time',
+    'heartrate',
+    'distance',
+    'altitude',
+    'velocity_smooth',
+    'cadence',
+    'grade_smooth',
+  ]);
 }
 
 /**

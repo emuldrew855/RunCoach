@@ -149,19 +149,35 @@ async function buildRunAnalysisContext(
 
   // Fetch ONLY the daily insight for this specific activity
   let dailyInsights = [];
+  let activitySplits = null;
+
   if (targetActivity) {
     const { query } = await import('../config/database');
 
-    const result = await query(
+    // Fetch daily insight
+    const insightResult = await query(
       `SELECT * FROM daily_run_insights WHERE activity_id = $1`,
       [targetActivity.id]
     );
 
-    if (result.rows.length > 0) {
-      dailyInsights = [result.rows[0]];
+    if (insightResult.rows.length > 0) {
+      dailyInsights = [insightResult.rows[0]];
       console.log(`   Found daily insight for activity ${targetActivity.id}`);
     } else {
       console.log(`   No daily insight found for activity ${targetActivity.id}`);
+    }
+
+    // Fetch processed splits for detailed per-km analysis
+    const splitsResult = await query(
+      `SELECT processed_splits FROM activities WHERE id = $1 AND processed_splits IS NOT NULL`,
+      [targetActivity.id]
+    );
+
+    if (splitsResult.rows.length > 0 && splitsResult.rows[0].processed_splits) {
+      activitySplits = splitsResult.rows[0].processed_splits;
+      console.log(`   Found processed splits for activity ${targetActivity.id} (${activitySplits.splits?.length || 0} kms)`);
+    } else {
+      console.log(`   No processed splits found for activity ${targetActivity.id}`);
     }
   }
 
@@ -192,6 +208,7 @@ async function buildRunAnalysisContext(
       zone5Max: profile?.hr_zone_5_max || 220,
     },
     dailyInsights, // Only the ONE run being discussed
+    activitySplits, // Per-km splits analysis for detailed coaching
     weeklyInsight: undefined, // Not relevant for single run
     // REMOVED: Not needed for analyzing a single run
     raceHistory: [],

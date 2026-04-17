@@ -130,10 +130,15 @@ export async function getLinkedPlannedWorkout(activityId: number): Promise<any |
        pw.name,
        pw.workout_type,
        pw.target_distance_meters,
+       pw.target_duration_seconds,
        pw.target_hr_zone,
+       pw.target_hr_min,
+       pw.target_hr_max,
        pw.target_pace_min,
        pw.target_pace_max,
        pw.description,
+       pw.intervals,
+       pw.coach_notes,
        'direct_link' as match_type
      FROM planned_workouts pw
      WHERE pw.completed_activity_id = $1`,
@@ -152,10 +157,15 @@ export async function getLinkedPlannedWorkout(activityId: number): Promise<any |
        pw.name,
        pw.workout_type,
        pw.target_distance_meters,
+       pw.target_duration_seconds,
        pw.target_hr_zone,
+       pw.target_hr_min,
+       pw.target_hr_max,
        pw.target_pace_min,
        pw.target_pace_max,
        pw.description,
+       pw.intervals,
+       pw.coach_notes,
        'date_match' as match_type
      FROM planned_workouts pw
      JOIN training_plans tp ON pw.training_plan_id = tp.id

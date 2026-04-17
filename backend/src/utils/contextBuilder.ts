@@ -126,6 +126,30 @@ export interface UserContextData {
   };
   longTermMemory?: LongTermMemory; // Phase 2: RAG-based semantic memory
   dailyInsights?: DailyRunInsight[]; // NEW: Pre-computed daily insights (last 7 days)
+  activitySplits?: {  // Per-kilometer splits analysis for run discussions
+    splits: Array<{
+      km: number;
+      pace: string;
+      pace_seconds_per_km: number;
+      avg_hr: number | null;
+      elevation_start: number | null;
+      elevation_end: number | null;
+      avg_cadence: number | null;
+      intensity_zone: number | null;
+      gap_seconds_per_km: number | null;
+    }>;
+    analysis: {
+      fastest_km: { km: number; pace: string } | null;
+      slowest_km: { km: number; pace: string } | null;
+      avg_pace: string;
+      positive_split: boolean;
+      negative_split: boolean;
+      pace_consistency: number;
+      hr_drift_percent: number | null;
+      aerobic_decoupling: number | null;
+      fade_point_km: number | null;
+    };
+  } | null;
   weeklyInsight?: WeeklyInsight | null; // NEW: Latest weekly insight
   runnerTendencies?: RunnerTendency[]; // NEW Phase 2: Behavioral patterns over 4-6 weeks
   raceHistory?: any[]; // User's race history
@@ -1217,6 +1241,24 @@ ${userData.recentActivities && userData.recentActivities.length > 0
   ? userData.recentActivities.slice(0, 10).map(activity => `- ${formatDate(activity.start_date)}: ${(activity.distance_meters / 1000).toFixed(2)} km in ${formatTime(activity.moving_time_seconds)} (${(activity.average_speed ? (1000 / (activity.average_speed * 60)).toFixed(2) : 'N/A')} min/km pace)`).join('\n')
   : '- No activities recorded in the last 30 days. Sync activities from Strava to begin analysis.'}
 
+${userData.activitySplits ? `# Per-Kilometer Splits Analysis (For This Run)
+**Pacing Summary:**
+- Average Pace: ${userData.activitySplits.analysis.avg_pace}/km
+- Fastest KM: ${userData.activitySplits.analysis.fastest_km ? `KM ${userData.activitySplits.analysis.fastest_km.km} at ${userData.activitySplits.analysis.fastest_km.pace}` : 'N/A'}
+- Slowest KM: ${userData.activitySplits.analysis.slowest_km ? `KM ${userData.activitySplits.analysis.slowest_km.km} at ${userData.activitySplits.analysis.slowest_km.pace}` : 'N/A'}
+- Split Type: ${userData.activitySplits.analysis.negative_split ? 'Negative Split (faster 2nd half - excellent!)' : userData.activitySplits.analysis.positive_split ? 'Positive Split (slower 2nd half)' : 'Even Split'}
+- Pace Consistency: ${(userData.activitySplits.analysis.pace_consistency * 100).toFixed(0)}%
+${userData.activitySplits.analysis.hr_drift_percent !== null ? `- HR Drift: ${userData.activitySplits.analysis.hr_drift_percent > 0 ? '+' : ''}${userData.activitySplits.analysis.hr_drift_percent}%` : ''}
+${userData.activitySplits.analysis.aerobic_decoupling !== null ? `- Aerobic Decoupling: ${userData.activitySplits.analysis.aerobic_decoupling}% ${userData.activitySplits.analysis.aerobic_decoupling <= 5 ? '(Good aerobic fitness)' : '(Cardiac drift detected)'}` : ''}
+${userData.activitySplits.analysis.fade_point_km ? `- ⚠️ Fade Point: Pace began dropping at KM ${userData.activitySplits.analysis.fade_point_km}` : ''}
+
+**Per-Kilometer Breakdown:**
+${userData.activitySplits.splits.map(split =>
+  `- KM ${split.km}: ${split.pace}/km${split.avg_hr ? ` | HR: ${split.avg_hr} bpm (Zone ${split.intensity_zone || '?'})` : ''}${split.gap_seconds_per_km ? ` | GAP: ${Math.floor(split.gap_seconds_per_km / 60)}:${String(Math.round(split.gap_seconds_per_km % 60)).padStart(2, '0')}/km` : ''}${split.elevation_start !== null && split.elevation_end !== null ? ` | Elev: ${(split.elevation_end - split.elevation_start) > 0 ? '+' : ''}${Math.round(split.elevation_end - split.elevation_start)}m` : ''}`
+).join('\n')}
+
+Use this detailed split data to provide specific feedback on pacing strategy, identify strong/weak sections, and give actionable advice for future runs.
+` : ''}
 # Your Role as AI Running Coach
 You are an expert running coach who provides:
 

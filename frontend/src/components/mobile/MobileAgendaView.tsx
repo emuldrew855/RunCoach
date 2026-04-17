@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, addWeeks, subWeeks, isToday } from 'date-fns';
-import { ChevronLeft, ChevronRight, CheckCircle2, Circle, Clock } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, addWeeks, subWeeks, isToday, addDays, subDays } from 'date-fns';
+import { ChevronLeft, ChevronRight, CheckCircle2, Circle, Clock, Move, X, GripVertical } from 'lucide-react';
 import { usePreferences } from '../../context/PreferencesContext';
 
 interface Workout {
@@ -31,6 +31,7 @@ interface MobileAgendaViewProps {
   onWorkoutClick: (workout: Workout) => void;
   onActivityClick: (activity: Activity) => void;
   onAddWorkout: (date: Date) => void;
+  onMoveWorkout?: (workoutId: number, newDate: Date) => void;
   currentMonth: Date;
   onMonthChange: (date: Date) => void;
 }
@@ -41,6 +42,7 @@ export const MobileAgendaView: React.FC<MobileAgendaViewProps> = ({
   onWorkoutClick,
   onActivityClick,
   onAddWorkout,
+  onMoveWorkout,
   currentMonth,
   onMonthChange,
 }) => {
@@ -48,6 +50,13 @@ export const MobileAgendaView: React.FC<MobileAgendaViewProps> = ({
   const [currentWeekStart, setCurrentWeekStart] = useState(() =>
     startOfWeek(new Date(), { weekStartsOn: preferences.weekStartsOn === 'monday' ? 1 : 0 })
   );
+
+  // Move mode state
+  const [movingWorkout, setMovingWorkout] = useState<Workout | null>(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [datePickerWeek, setDatePickerWeek] = useState<Date>(new Date());
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isLongPressing, setIsLongPressing] = useState(false);
 
   const weekStart = startOfWeek(currentWeekStart, {
     weekStartsOn: preferences.weekStartsOn === 'monday' ? 1 : 0,
@@ -75,6 +84,64 @@ export const MobileAgendaView: React.FC<MobileAgendaViewProps> = ({
     setCurrentWeekStart(today);
     onMonthChange(today);
   };
+
+  // Long press handlers for initiating move
+  const handleTouchStart = (workout: Workout) => {
+    if (workout.completion_status === 'completed') return; // Can't move completed workouts
+
+    longPressTimer.current = setTimeout(() => {
+      setIsLongPressing(true);
+      setMovingWorkout(workout);
+      setDatePickerWeek(new Date(workout.scheduled_date));
+      setShowDatePicker(true);
+      // Haptic feedback if available
+      if (navigator.vibrate) {
+        navigator.vibrate(50);
+      }
+    }, 500); // 500ms long press
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    setIsLongPressing(false);
+  };
+
+  const handleTouchMove = () => {
+    // Cancel long press if finger moves
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    setIsLongPressing(false);
+  };
+
+  const handleMoveToDate = (newDate: Date) => {
+    if (movingWorkout && onMoveWorkout) {
+      onMoveWorkout(movingWorkout.id, newDate);
+    }
+    setMovingWorkout(null);
+    setShowDatePicker(false);
+  };
+
+  const cancelMove = () => {
+    setMovingWorkout(null);
+    setShowDatePicker(false);
+  };
+
+  // Date picker navigation
+  const datePickerWeekStart = startOfWeek(datePickerWeek, {
+    weekStartsOn: preferences.weekStartsOn === 'monday' ? 1 : 0,
+  });
+  const datePickerWeekEnd = endOfWeek(datePickerWeek, {
+    weekStartsOn: preferences.weekStartsOn === 'monday' ? 1 : 0,
+  });
+  const datePickerDays = eachDayOfInterval({ start: datePickerWeekStart, end: datePickerWeekEnd });
+
+  const goToPreviousPickerWeek = () => setDatePickerWeek(subWeeks(datePickerWeek, 1));
+  const goToNextPickerWeek = () => setDatePickerWeek(addWeeks(datePickerWeek, 1));
 
   // Calculate weekly stats
   const weekWorkouts = workouts.filter(w => {
@@ -216,42 +283,86 @@ export const MobileAgendaView: React.FC<MobileAgendaViewProps> = ({
                 <div className="space-y-2">
                   {/* Planned Workouts */}
                   {dayWorkouts.map((workout) => (
-                    <button
+                    <div
                       key={workout.id}
-                      onClick={() => onWorkoutClick(workout)}
-                      className={`w-full p-4 rounded-xl border-2 transition-all active:scale-98 ${getWorkoutTypeColor(workout.workout_type)}`}
+                      className={`relative rounded-xl border-2 transition-all ${getWorkoutTypeColor(workout.workout_type)} ${
+                        movingWorkout?.id === workout.id ? 'ring-2 ring-strava ring-offset-2' : ''
+                      }`}
                     >
-                      <div className="flex items-start gap-3">
-                        <div className="flex-shrink-0 mt-0.5">
-                          {workout.completion_status === 'completed' ? (
-                            <CheckCircle2 size={20} className="text-current" />
-                          ) : workout.completion_status === 'skipped' ? (
-                            <Circle size={20} className="text-current opacity-50" />
-                          ) : (
-                            <Clock size={20} className="text-current" />
-                          )}
-                        </div>
-                        <div className="flex-1 text-left">
-                          <div className="font-semibold text-sm">
-                            {workout.name || workout.workout_type}
+                      <div className="flex items-stretch">
+                        {/* Move handle - only for pending workouts */}
+                        {workout.completion_status === 'pending' && onMoveWorkout && (
+                          <button
+                            onTouchStart={() => handleTouchStart(workout)}
+                            onTouchEnd={handleTouchEnd}
+                            onTouchMove={handleTouchMove}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMovingWorkout(workout);
+                              setDatePickerWeek(new Date(workout.scheduled_date));
+                              setShowDatePicker(true);
+                            }}
+                            className="flex items-center justify-center px-2 border-r border-current/20 opacity-60 hover:opacity-100 active:bg-black/5 dark:active:bg-white/5"
+                            aria-label="Move workout"
+                          >
+                            <GripVertical size={18} className="text-current" />
+                          </button>
+                        )}
+
+                        {/* Main workout content */}
+                        <button
+                          onClick={() => {
+                            if (!isLongPressing) {
+                              onWorkoutClick(workout);
+                            }
+                          }}
+                          onTouchStart={() => handleTouchStart(workout)}
+                          onTouchEnd={handleTouchEnd}
+                          onTouchMove={handleTouchMove}
+                          className="flex-1 p-4 text-left active:scale-98"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="flex-shrink-0 mt-0.5">
+                              {workout.completion_status === 'completed' ? (
+                                <CheckCircle2 size={20} className="text-current" />
+                              ) : workout.completion_status === 'skipped' ? (
+                                <Circle size={20} className="text-current opacity-50" />
+                              ) : (
+                                <Clock size={20} className="text-current" />
+                              )}
+                            </div>
+                            <div className="flex-1">
+                              <div className="font-semibold text-sm">
+                                {workout.name || workout.workout_type}
+                              </div>
+                              {workout.target_distance_meters && (
+                                <div className="text-xs mt-1 opacity-90">
+                                  {(() => {
+                                    const distance = parseFloat(workout.target_distance_meters);
+                                    return isNaN(distance) ? '0' : convertDistance(distance * 1000);
+                                  })()} {distanceUnit}
+                                  {workout.target_hr_zone && ` • Zone ${workout.target_hr_zone}`}
+                                </div>
+                              )}
+                              {workout.target_pace_avg && (
+                                <div className="text-xs mt-1 opacity-75">
+                                  Target: {convertPace(parseFloat(workout.target_pace_avg))} /{paceUnit.replace('min/', '')}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          {workout.target_distance_meters && (
-                            <div className="text-xs mt-1 opacity-90">
-                              {(() => {
-                                const distance = parseFloat(workout.target_distance_meters);
-                                return isNaN(distance) ? '0' : convertDistance(distance * 1000);
-                              })()} {distanceUnit}
-                              {workout.target_hr_zone && ` • Zone ${workout.target_hr_zone}`}
-                            </div>
-                          )}
-                          {workout.target_pace_avg && (
-                            <div className="text-xs mt-1 opacity-75">
-                              Target: {convertPace(parseFloat(workout.target_pace_avg))} /{paceUnit.replace('min/', '')}
-                            </div>
-                          )}
-                        </div>
+                        </button>
                       </div>
-                    </button>
+
+                      {/* Long press hint for pending workouts */}
+                      {workout.completion_status === 'pending' && onMoveWorkout && (
+                        <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 translate-y-full opacity-0 group-hover:opacity-100 pointer-events-none">
+                          <span className="text-[10px] text-gray-400 whitespace-nowrap">
+                            Hold to move
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   ))}
 
                   {/* Completed Activities */}
@@ -284,6 +395,133 @@ export const MobileAgendaView: React.FC<MobileAgendaViewProps> = ({
           );
         })}
       </div>
+
+      {/* Date Picker Modal for Moving Workouts */}
+      {showDatePicker && movingWorkout && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end justify-center">
+          <div className="bg-white dark:bg-gray-800 w-full max-w-lg rounded-t-2xl shadow-xl animate-slide-up">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">
+                  Move Workout
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {movingWorkout.name || movingWorkout.workout_type}
+                </p>
+              </div>
+              <button
+                onClick={cancelMove}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
+              >
+                <X size={24} className="text-gray-500 dark:text-gray-400" />
+              </button>
+            </div>
+
+            {/* Week Navigation */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+              <button
+                onClick={goToPreviousPickerWeek}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
+              >
+                <ChevronLeft size={24} className="text-gray-700 dark:text-gray-300" />
+              </button>
+              <div className="text-center">
+                <div className="text-base font-semibold text-gray-900 dark:text-gray-100">
+                  {format(datePickerWeekStart, 'MMM d')} - {format(datePickerWeekEnd, 'MMM d, yyyy')}
+                </div>
+              </div>
+              <button
+                onClick={goToNextPickerWeek}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
+              >
+                <ChevronRight size={24} className="text-gray-700 dark:text-gray-300" />
+              </button>
+            </div>
+
+            {/* Day Grid */}
+            <div className="p-4">
+              <div className="grid grid-cols-7 gap-2 mb-2">
+                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => {
+                  const adjustedIndex = preferences.weekStartsOn === 'monday'
+                    ? (i + 1) % 7
+                    : i;
+                  const dayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+                  return (
+                    <div key={i} className="text-center text-xs font-medium text-gray-400 dark:text-gray-500 py-1">
+                      {dayLabels[adjustedIndex]}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="grid grid-cols-7 gap-2">
+                {datePickerDays.map((day) => {
+                  const isCurrentDate = isSameDay(day, new Date(movingWorkout.scheduled_date));
+                  const isDayToday = isToday(day);
+                  const hasWorkouts = workouts.some(w =>
+                    isSameDay(new Date(w.scheduled_date), day) && w.id !== movingWorkout.id
+                  );
+
+                  return (
+                    <button
+                      key={day.toString()}
+                      onClick={() => handleMoveToDate(day)}
+                      disabled={isCurrentDate}
+                      className={`
+                        aspect-square rounded-xl flex flex-col items-center justify-center text-sm font-medium
+                        transition-all active:scale-95
+                        ${isCurrentDate
+                          ? 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                          : isDayToday
+                            ? 'bg-strava text-white'
+                            : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 hover:bg-strava/20 active:bg-strava/30'
+                        }
+                      `}
+                    >
+                      <span className="text-base">{format(day, 'd')}</span>
+                      {hasWorkouts && !isCurrentDate && (
+                        <span className="w-1 h-1 rounded-full bg-current opacity-50 mt-0.5" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Quick Actions */}
+            <div className="p-4 pt-0 grid grid-cols-3 gap-2">
+              <button
+                onClick={() => handleMoveToDate(subDays(new Date(movingWorkout.scheduled_date), 1))}
+                className="py-3 px-4 bg-gray-100 dark:bg-gray-700 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              >
+                ← Day Earlier
+              </button>
+              <button
+                onClick={() => handleMoveToDate(new Date())}
+                className="py-3 px-4 bg-strava/10 rounded-xl text-sm font-medium text-strava hover:bg-strava/20 transition-colors"
+              >
+                Today
+              </button>
+              <button
+                onClick={() => handleMoveToDate(addDays(new Date(movingWorkout.scheduled_date), 1))}
+                className="py-3 px-4 bg-gray-100 dark:bg-gray-700 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              >
+                Day Later →
+              </button>
+            </div>
+
+            {/* Cancel button */}
+            <div className="p-4 pt-0 pb-8">
+              <button
+                onClick={cancelMove}
+                className="w-full py-3 text-center text-gray-500 dark:text-gray-400 font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

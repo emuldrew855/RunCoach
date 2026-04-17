@@ -13,7 +13,7 @@ export const DEFAULT_HR_ZONE_THRESHOLDS = {
 /**
  * Get user's custom HR zones from profile
  */
-async function getUserHRZones(userId: number): Promise<{
+export async function getUserHRZones(userId: number): Promise<{
   zone_1_max: number;
   zone_2_max: number;
   zone_3_max: number;

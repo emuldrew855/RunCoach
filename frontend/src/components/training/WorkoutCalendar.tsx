@@ -781,6 +781,28 @@ export const WorkoutCalendar: React.FC = () => {
     }
   };
 
+  // Mobile move handler - shares logic with drag and drop
+  const handleMobileMove = async (workoutId: number, newDate: Date) => {
+    try {
+      // Format date as YYYY-MM-DD to avoid timezone issues
+      const year = newDate.getFullYear();
+      const month = String(newDate.getMonth() + 1).padStart(2, '0');
+      const day = String(newDate.getDate()).padStart(2, '0');
+      const dateString = `${year}-${month}-${day}`;
+
+      // Update the workout's scheduled date
+      await trainingPlanAPI.updateWorkout(workoutId, {
+        scheduled_date: dateString,
+      });
+
+      toast.success('Workout moved');
+      loadData();
+    } catch (error: any) {
+      toast.error('Failed to move workout');
+      console.error('Error moving workout:', error.response?.data || error.message);
+    }
+  };
+
   const handleEditWorkout = () => {
     setIsEditingWorkout(true);
     setEditFormData({
@@ -1037,6 +1059,7 @@ export const WorkoutCalendar: React.FC = () => {
               setSelectedDate(date);
               setShowCreateModal(true);
             }}
+            onMoveWorkout={handleMobileMove}
             currentMonth={currentMonth}
             onMonthChange={setCurrentMonth}
           />
