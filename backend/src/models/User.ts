@@ -59,8 +59,11 @@ export async function updateUser(id: number, updates: Partial<User>): Promise<Us
   return result.rows[0];
 }
 
-export async function upsertUser(user: Omit<User, 'id' | 'created_at' | 'updated_at' | 'last_login_at'>): Promise<User> {
-  const result = await query(
+export async function upsertUser(
+  user: Omit<User, 'id' | 'created_at' | 'updated_at' | 'last_login_at'>,
+  executeQuery: typeof query = query
+): Promise<User> {
+  const result = await executeQuery(
     `INSERT INTO users (strava_id, email, first_name, last_name, profile_picture_url, access_token, refresh_token, token_expires_at, last_login_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
      ON CONFLICT (strava_id)
