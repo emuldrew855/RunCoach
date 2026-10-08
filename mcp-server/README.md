@@ -184,6 +184,13 @@ Strava enforces its configured **Authorization Callback Domain**. For shared mod
 
 `validate-mcp.yml` compiles and tests the backend changes and produces a four-module `backend-shared-strava` artifact. This is a narrow compatibility update, not a full backend release: retain the deployed database/startup modules, dependencies, migrations, and existing settings. The backend redacts the relay query from its Morgan application access logs; platform or external proxy logging must likewise avoid capturing OAuth credentials.
 
+If the backend uses `WEBSITE_RUN_FROM_PACKAGE=1`, update its active deployment ZIP,
+not just files exposed through Kudu's `site/wwwroot` filesystem. Preserve every
+unrelated archive entry and replace only the reviewed compiled modules. Verify the
+active package after deployment and confirm the running callback route; a successful
+upload alone does not prove the process has loaded the new package. Arrange any
+required backend restart with the service owner.
+
 Only use HTTP with loopback hosts during local development. Remote ChatGPT needs a reachable HTTPS deployment, not an inaccessible localhost URL.
 
 ### 4. Create the schema and start
