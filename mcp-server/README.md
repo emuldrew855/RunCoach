@@ -179,6 +179,8 @@ npm start
 
 `schema.sql` is the idempotent MCP database definition, separate from `../backend/migrations/`. Migrations must run before accepting connections. Standalone creates its own credential storage and requires no existing RunCoach schema. Shared mode additionally requires existing `public.users`, reads/writes only its identity/Strava credential fields, and does not change the structure of RunCoach's users or activities tables.
 
+For historical MCP-schema upgrades, migration preserves the legacy `connections.credentials` column and its values, conditionally removing only its `NOT NULL` constraint so new connections can be inserted. It neither imports nor encrypts historical plaintext JSONB values; protect that legacy data separately. The new standalone deployment uses a fresh dedicated database, avoiding historical data and never copying legacy tokens.
+
 The MCP schema stores connection identity, short-lived authorization state, grants, and hashed MCP tokens. Standalone stores application-encrypted Strava credentials there. **Only shared mode** retains legacy plaintext credentials in `public.users`. Activities are retrieved live rather than copied from the old database.
 
 The shared-mode identity relationship is:
@@ -212,17 +214,17 @@ Standalone migration is transactional and shares an advisory lock with token ope
 
 This pilot uses a **preregistered confidential OAuth client with S256 PKCE**, not unrestricted public-client access or open dynamic client registration. Confirm the actual ChatGPT client supports the configured client authentication. Deployment does not confer Strava vendor approval or public ChatGPT app-directory approval.
 
-## Independent Azure implementation and deployment plan
+## Independent Azure deployment
 
 The independent infrastructure entry point is `infra/mcp.bicep`, at **resource-group scope**. Use the existing `runcoach-prod-rg` in **SwedenCentral**, but provision a **new dedicated App Service plan, MCP web app, PostgreSQL server/database, and private database VNet networking**. Do not reuse or update the old plan, web app, database, agent, or their configuration. The MCP service has no OpenAI dependency.
 
-Implementation boundaries:
+Implemented component boundaries:
 
 - **Storage:** mode selection, encrypted standalone credentials, idempotent MCP migrations, and transactional token-rotation coordination; preserve shared compatibility without requiring `public.users` in standalone.
 - **Runtime:** independent Node service/startup, production configuration, fixed external HTTPS origin, and trusted Azure managed-ingress handling. Reject invalid standalone keys/configuration before serving requests.
 - **Infrastructure/deployment:** isolated resources in `infra/mcp.bicep`; a separate `.github/workflows/deploy-mcp.yml` targeting the **`ProdMcp`** GitHub environment, not the old application's production workflow/environment.
 
-The full-stack workflow's push paths are limited to `backend/**`, `frontend/**`, `agent-service/**`, `infra/main.bicep`, and `infra/resources.bicep`; its own workflow path is not a push trigger. MCP, documentation, and workflow-isolation changes therefore do not trigger a full-stack redeployment on merge. The old workflow retains manual dispatch. The MCP template uses explicit new resource names and must not touch old apps.
+The full-stack workflow's push paths are limited to `backend/**`, `frontend/**`, `agent-service/**`, `infra/main.bicep`, and `infra/resources.bicep`; its own workflow path is not a push trigger. MCP, documentation, and workflow-isolation changes therefore do not trigger a full-stack redeployment on merge. The old workflow retains manual dispatch; keep its `Prod` approval protections in place. The MCP template uses explicit new resource names and must not touch old apps.
 
 ### Administrator bootstrap
 
@@ -241,6 +243,25 @@ Supply these template parameters:
 | `mcpCredentialEncryptionKey` | Secure, persistent canonical base64 32-byte encryption key (44 characters) |
 | `redirectUris` | Array of exact ChatGPT OAuth callbacks |
 | `githubRepository` | Exact GitHub `owner/repository` for the `ProdMcp` federated subject |
+
+Have the administrator create the protected external parameter file using this complete ARM parameter-file structure, replacing **every placeholder** through secure provisioning. This example contains no real secrets; do not save the populated file in the repository. Optional region/resource-name parameters are omitted to inherit the SwedenCentral/MCP-specific defaults.
+
+```json
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "postgresPassword": { "value": "<new-database-password-at-least-16-characters>" },
+    "stravaClientId": { "value": "<dedicated-strava-client-id>" },
+    "stravaClientSecret": { "value": "<strava-client-secret>" },
+    "mcpClientId": { "value": "<preregistered-chatgpt-client-id>" },
+    "mcpClientSecret": { "value": "<independent-client-secret-at-least-32-characters>" },
+    "mcpCredentialEncryptionKey": { "value": "<persistent-canonical-base64-of-32-random-bytes>" },
+    "redirectUris": { "value": ["https://<exact-chatgpt-callback-host>/<exact-callback-path>"] },
+    "githubRepository": { "value": "<owner>/<repository>" }
+  }
+}
+```
 
 ```bash
 export REPO_ROOT=/home/runner/work/RunCoach/RunCoach
@@ -270,7 +291,7 @@ az deployment group create \
 
 ### Separate deployment identity
 
-Configure GitHub OIDC for `ProdMcp`, with a federated subject restricted to this repository and `environment:ProdMcp`. Give its identity **Website Contributor scoped only to the new MCP web app** and **Reader scoped to `runcoach-prod-rg`**. Reader permits discovery, not modification; the identity must not receive resource-group Contributor/Owner or rights to alter the old app. Administrator bootstrap, not this app-only identity, owns infrastructure creation and privileged role assignments.
+Configure GitHub OIDC for `ProdMcp`, with the exact federated subject `repo:<owner>/<repository>:environment:ProdMcp`. Protect the environment with required approvals and deployment-branch restrictions permitting only `main`/`master`; the workflow also restricts deployment to these branches. Give its identity **Website Contributor scoped only to the new MCP web app** and **Reader scoped to `runcoach-prod-rg`**. Reader permits discovery, not modification; the identity must not receive resource-group Contributor/Owner or rights to alter the old app. An authorized resource-group Owner (or equivalent provisioning plus RBAC permissions) performs bootstrap and privileged role assignments, not this app-only identity.
 
 The template creates a dedicated user-assigned deployment identity and federated credential. Populate the **`ProdMcp` environment**, using the nonsecret deployment outputs:
 
@@ -283,10 +304,17 @@ The template creates a dedicated user-assigned deployment identity and federated
 | Secret `MCP_PUBLIC_URL` | Output `mcpPublicUrl` |
 | Variable `STRAVA_CLIENT_ID` | Same dedicated registration ID passed to bootstrap |
 | Variable `MCP_CLIENT_ID` | Same confidential ChatGPT client ID passed to bootstrap |
+| Variable `MCP_POSTGRES_HOST` | Output `postgresHost`, the dedicated MCP PostgreSQL hostname |
 
 These Azure identifiers/URLs are not passwords; their storage as environment secrets matches the workflow interface. Application secrets remain provisioned app settings, not ZIP contents or workflow output. Register output `stravaCallbackUrl` with the selected Strava application. The workflow checks its target/settings against this environment before deploying.
 
-The separate workflow must deploy only the `mcp-server` artifact, preserve provisioned app settings/secrets, and use the new app's private database connectivity for migrations. Do not migrate private PostgreSQL directly from a public GitHub runner by opening its firewall. Set `STRAVA_CREDENTIAL_STORE=standalone`, the stable encryption key, the dedicated database URL, `HOST=0.0.0.0`, and `TRUSTED_PROXY_MODE=azure-app-service`. Enable HTTPS Only and verify health after deployment. Configure environment approval/protection rules before enabling production deployments.
+The template persists secure bootstrap values in Azure App Service's encrypted app settings; it does **not** provision Key Vault or Key Vault references. Keep the source encryption key and other secrets in a protected secret manager/Key Vault out of band for recovery and redeployment. The template sets `PORT=8080`, overriding the local default `3002`.
+
+The separate workflow must deploy only the `mcp-server` artifact and preserve provisioned app settings/secrets. `npm start` runs migrations within the VNet-integrated App Service before listening, using its private database connectivity; migrations do **not** run on the GitHub runner. Do not open the database firewall to migrate from a public runner. Set `STRAVA_CREDENTIAL_STORE=standalone`, the stable encryption key, the dedicated database URL, `HOST=0.0.0.0`, and `TRUSTED_PROXY_MODE=azure-app-service`. Enable HTTPS Only and verify health after deployment. Configure environment approval/protection rules before enabling production deployments.
+
+### Cost and capacity
+
+The dedicated **App Service B1 plan and PostgreSQL B1ms server incur ongoing charges while provisioned**, plus storage/networking costs. “On-demand” means retrieving Strava data when tools are called, **not scale-to-zero hosting**. Azure SKU availability, subscription quota, and actual regional costs have not been verified live; the administrator must check these before bootstrap.
 
 ## HTTP endpoints
 
@@ -314,7 +342,7 @@ The protected resource is `MCP_PUBLIC_URL` plus `/mcp`, with the scope `runcoach
 - Refresh tokens rotate; grant revocation invalidates all associated MCP tokens, including previously issued access tokens.
 - Revoking this MCP connection does **not** call Strava's app-wide deauthorization endpoint, which could also disconnect RunCoach.
 - Data already shared with ChatGPT is not deleted by revoking access.
-- Standalone cleanup removes expired OAuth/grant/connection records but retains encrypted credential rows, including after denied or revoked grants, to protect overlapping authorization flows. Retention does not restore access: MCP grant/token checks enforce revocation immediately. Plan any credential deletion separately and require reauthorization afterward.
+- Standalone cleanup removes expired OAuth/grant/connection records but retains encrypted credential rows, including after denied or revoked grants, to protect overlapping authorization flows. Denial/revocation neither deauthorizes Strava nor erases encrypted upstream credentials. Retention does not restore access: MCP grant/token checks enforce revocation immediately. Establish an administrator-controlled retention/purge process that accounts for other active grants and concurrent flows; deleting credentials requires reauthorization.
 - Do not log authorization headers, callback query strings, cookies, token responses, encryption keys, or upstream error bodies. Apply the same redaction at the reverse proxy.
 - Keep PostgreSQL backups and access controls protected. Standalone needs only its own database/schema. Shared mode additionally needs `public.users` identity/credential columns, not RunCoach's other data tables.
 - Strava API limits apply per registration (shared with RunCoach only in shared mode). Summaries can require multiple requests; surface upstream throttling and bounded retrieval to the client.
@@ -323,6 +351,7 @@ The protected resource is `MCP_PUBLIC_URL` plus `/mcp`, with the scope `runcoach
 - `/connections` manages the grant approved in that browser for 30 minutes. After that session expires, revoke the connection from the OAuth client using `/oauth/revoke`; it is not a persistent RunCoach account-management page.
 - Serve consent pages and MCP over HTTPS. Default `TRUSTED_PROXY_MODE=loopback` requires a loopback proxy preserving the public `Host` and replacing forwarded headers. Azure uses `HOST=0.0.0.0`, `TRUSTED_PROXY_MODE=azure-app-service`, HTTPS Only, and exactly one trusted managed ingress hop. Do not expose the backend directly or use Azure mode on another host; arbitrary forwarded headers are untrusted. For other ingress, use deliberately scoped `cidrs`/`TRUSTED_PROXY_CIDRS`.
 - Production requires the actual `Host` to match `MCP_PUBLIC_URL` and forwarded protocol to be exactly `https`, not a comma-separated protocol list. `/health` supports `GET` and `HEAD` but does not bypass these checks; configure health probes accordingly.
+- The workflow checks `/health` over the configured public HTTPS origin. The template does not enable App Service's internal health-check path because its Host/forwarded-protocol compatibility has not been verified; do not weaken runtime validation to accommodate an unverified probe.
 
 ## Validation
 
@@ -331,18 +360,25 @@ cd "$REPO_ROOT/mcp-server"
 npm test
 ```
 
-Tests use synthetic users and mocked Strava responses; they do not need real Strava credentials or send athlete data to Strava. The PostgreSQL integration suite is skipped unless `MCP_TEST_DATABASE_URL` points to a dedicated database whose name ends in `_test`:
+Tests use synthetic users and mocked Strava responses; they do not need real Strava credentials or send athlete data to Strava. Database suites are opt-in: `MCP_TEST_DATABASE_URL` enables shared OAuth/HTTP integration, while `MCP_STORAGE_TEST_DATABASE_URL` enables storage integration. Give each a **separate empty disposable database** whose name ends in `_test`, because their destructive setup must not collide:
 
 ```bash
-MCP_TEST_DATABASE_URL=postgresql://localhost:5432/runcoach_mcp_test npm test
+cd "$REPO_ROOT/mcp-server"
+MCP_TEST_DATABASE_URL=postgresql://localhost:5432/runcoach_mcp_oauth_test \
+MCP_STORAGE_TEST_DATABASE_URL=postgresql://localhost:5432/runcoach_mcp_storage_test \
+npm test
 npm run check
 ```
 
-**Never use either production database for tests.** Integration tests create/truncate synthetic tables, including test `public.users` for shared compatibility. Use an empty disposable database ending in `_test`; `npm test` without the variable runs non-database tests only. Never point destructive tests at the Azure MCP database or the old RunCoach database.
+**Never use either production database for tests.** Integration tests create/truncate synthetic tables, including test `public.users` for shared compatibility. Use separate empty disposable databases ending in `_test`; `npm test` without either variable skips both database suites. Never point destructive tests at the Azure MCP database or the old RunCoach database. The workflow's validation does not imply database coverage unless these isolated test databases are explicitly configured.
+
+Trace configuration through the selected storage/proxy modes during validation: use synthetic credentials and mocked upstream responses, verify the fixed public origin and actual Host checks, and reject spoofed forwarded headers/protocol lists. These checks do not establish live Azure ingress or ChatGPT compatibility.
 
 ### Live verification checklist
 
 Actual ChatGPT/Strava end-to-end verification **cannot be performed without credentials, a reachable deployment, and live account access**. Automated tests are not evidence that this checklist passed:
+
+Azure authentication/bootstrap and public-endpoint live checks remain operator tasks; implemented infrastructure and deployment instructions do not mean they have been executed.
 
 1. Confirm Strava vendor approval, the dedicated registration (or completed cutover), exact callback domain, confidential ChatGPT client credentials, and registered callback URI.
 2. Verify public HTTPS `/health`, both discovery documents, and unauthenticated `/mcp` returning `401` with discovery; confirm issuer/resource URLs use the configured HTTPS origin.

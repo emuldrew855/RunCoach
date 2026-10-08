@@ -188,7 +188,6 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
       minTlsVersion: '1.2'
       scmMinTlsVersion: '1.2'
       vnetRouteAllEnabled: true
-      healthCheckPath: '/health'
     }
   }
 }
@@ -206,7 +205,7 @@ resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     WEBSITE_NODE_DEFAULT_VERSION: '~22'
     SCM_DO_BUILD_DURING_DEPLOYMENT: 'false'
     ENABLE_ORYX_BUILD: 'false'
-    DATABASE_URL: 'postgresql://${postgresAdministrator}:${uriComponent(postgresPassword)}@${postgres.properties.fullyQualifiedDomainName}:5432/${database.name}?sslmode=verify-full'
+    DATABASE_URL: 'postgresql://${uriComponent(postgresAdministrator)}:${uriComponent(postgresPassword)}@${postgres.properties.fullyQualifiedDomainName}:5432/${database.name}?sslmode=verify-full'
     STRAVA_CREDENTIAL_STORE: 'standalone'
     MCP_CREDENTIAL_ENCRYPTION_KEY: mcpCredentialEncryptionKey
     STRAVA_CLIENT_ID: stravaClientId

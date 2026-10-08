@@ -22,6 +22,20 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment: ProdMcp
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mcp_test
+          POSTGRES_PASSWORD: mcp-ci-test-only
+          POSTGRES_DB: mcp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mcp_test -d mcp_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       AZURE_MCP_CLIENT_ID: ${{ secrets.AZURE_MCP_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -30,6 +44,7 @@ jobs:
       MCP_PUBLIC_URL: ${{ secrets.MCP_PUBLIC_URL }}
       STRAVA_CLIENT_ID: ${{ vars.STRAVA_CLIENT_ID }}
       MCP_CLIENT_ID: ${{ vars.MCP_CLIENT_ID }}
+      MCP_POSTGRES_HOST: ${{ vars.MCP_POSTGRES_HOST }}
     steps:
       - name: Validate protected environment configuration
         shell: bash
@@ -37,7 +52,7 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE'
           const names = ['AZURE_MCP_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID',
-            'AZURE_MCP_APP_NAME', 'MCP_PUBLIC_URL', 'STRAVA_CLIENT_ID', 'MCP_CLIENT_ID'];
+            'AZURE_MCP_APP_NAME', 'MCP_PUBLIC_URL', 'STRAVA_CLIENT_ID', 'MCP_CLIENT_ID', 'MCP_POSTGRES_HOST'];
           for (const name of names) {
             if (!process.env[name]?.trim()) {
               console.error(`::error::Missing ProdMcp configuration: ${name}`);
@@ -59,6 +74,10 @@ jobs:
             console.error('::error::Invalid MCP app name or HTTPS origin');
             process.exit(1);
           }
+          if (!/^[a-z0-9-]+\.postgres\.database\.azure\.com$/.test(process.env.MCP_POSTGRES_HOST)) {
+            console.error('::error::Invalid dedicated MCP PostgreSQL host');
+            process.exit(1);
+          }
           NODE
 
       - uses: actions/checkout@v4
@@ -68,9 +87,30 @@ jobs:
 
       - name: Install and validate MCP
         working-directory: mcp-server
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: mcp_test
+          PGPASSWORD: mcp-ci-test-only
+          MCP_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/mcp_test
+          MCP_STORAGE_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/mcp_storage_test
+          MCP_STANDALONE_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/mcp_standalone_test
         run: |
+          set -euo pipefail
           npm ci
-          npm test
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const pool = new pg.Pool({ connectionString: process.env.MCP_TEST_DATABASE_URL });
+          try {
+            // Separate disposable fixtures: never connect tests to Azure PostgreSQL.
+            for (const name of ['mcp_storage_test', 'mcp_standalone_test']) {
+              await pool.query(`CREATE DATABASE ${name}`);
+            }
+          } finally {
+            await pool.end();
+          }
+          NODE
+          npm test -- --test-concurrency=1
           npm run check
 
       - name: Package code and production dependencies only
@@ -97,17 +137,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          umask 077
-          trap 'rm -f mcp-target.json mcp-settings.json' EXIT
-          az webapp show --resource-group runcoach-prod-rg --name "$AZURE_MCP_APP_NAME" \
-            --query '{host:defaultHostName,httpsOnly:httpsOnly}' --output json > mcp-target.json
-          # Never print app settings: they include credentials.
-          az webapp config appsettings list --resource-group runcoach-prod-rg \
-            --name "$AZURE_MCP_APP_NAME" --output json > mcp-settings.json
           node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs';
-          const target = JSON.parse(readFileSync('mcp-target.json', 'utf8'));
-          const settings = Object.fromEntries(JSON.parse(readFileSync('mcp-settings.json', 'utf8')).map(x => [x.name, x.value]));
+          import { execFileSync } from 'node:child_process';
+          // Keep credentials in memory; never print or write Azure app settings.
+          function azureJson(args) {
+            try {
+              return JSON.parse(execFileSync('az', args, {
+                encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000,
+              }));
+            } catch {
+              console.error('::error::Unable to read dedicated MCP deployment configuration');
+              process.exit(1);
+            }
+          }
+          const scope = ['--resource-group', 'runcoach-prod-rg', '--name', process.env.AZURE_MCP_APP_NAME];
+          const target = azureJson(['webapp', 'show', ...scope,
+            '--query', '{host:defaultHostName,httpsOnly:httpsOnly}', '--output', 'json']);
+          const settings = Object.fromEntries(azureJson(['webapp', 'config', 'appsettings', 'list',
+            ...scope, '--output', 'json']).map(x => [x.name, x.value]));
           const expected = {
             MCP_PUBLIC_URL: process.env.MCP_PUBLIC_URL,
             MCP_CLIENT_ID: process.env.MCP_CLIENT_ID,
@@ -116,6 +163,7 @@ jobs:
             TRUSTED_PROXY_MODE: 'azure-app-service',
             HOST: '0.0.0.0',
             NODE_ENV: 'production',
+            STRAVA_REDIRECT_URI: `${process.env.MCP_PUBLIC_URL}/strava/callback`,
           };
           if (!target.httpsOnly || `https://${target.host}` !== process.env.MCP_PUBLIC_URL ||
               Object.entries(expected).some(([key, value]) => settings[key] !== value) ||
@@ -129,6 +177,7 @@ jobs:
           try {
             const database = new URL(settings.DATABASE_URL);
             verifiedTls = database.protocol === 'postgresql:' && database.pathname === '/runcoach_mcp' &&
+              database.hostname === process.env.MCP_POSTGRES_HOST &&
               database.searchParams.get('sslmode') === 'verify-full';
           } catch {}
           if (decoded.length !== 32 || decoded.toString('base64') !== key || !verifiedTls) {
@@ -147,6 +196,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sleep 30
           node --input-type=module <<'NODE'
           const base = process.env.MCP_PUBLIC_URL;
           let healthy = false;
@@ -184,9 +234,8 @@ jobs:
           console.log('MCP health, discovery, and resource authentication checks passed');
           NODE
 
-      - name: Remove credential files and logout
+      - name: Azure logout
         if: always()
         shell: bash
         run: |
-          rm -f mcp-target.json mcp-settings.json
           az logout || true
