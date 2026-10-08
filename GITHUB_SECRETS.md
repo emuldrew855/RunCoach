@@ -68,6 +68,7 @@ These application credentials reside in Azure backend/agent app settings, not fr
 ## Verification and troubleshooting
 
 - Confirm all 11 entries exist in **Prod**, environment approvals/branch restrictions are active, and the workflow uses that environment.
+- Automatic full-stack deployment also requires the **repository variable** `ENABLE_FULL_STACK_DEPLOYMENT=true`. Leave it unset for MCP-only operation; manual dispatch is still available.
 - Allow for Azure RBAC propagation after provisioning. Authentication failures require checking the client/tenant/subscription IDs and exact issuer/audience/subject, not creating a new password credential.
 - Authorization failures require verifying resource-group Contributor and target resource scope; missing resources require checking the three generated app names.
 - Preflight accepts only `refs/heads/main` or `refs/heads/master` and rejects missing configuration, non-HTTPS origins, trailing slashes, and mismatched `VITE_API_URL`.

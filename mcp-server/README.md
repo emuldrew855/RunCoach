@@ -15,6 +15,8 @@ It does **not** require RunCoach's React frontend, backend process, agent servic
 
 **Separate databases do not isolate Strava refresh-token rotation.** Strava rotates tokens for an application/athlete pair. Standalone must not run alongside RunCoach using the same registration and independent token stores. Prefer a new registration; otherwise stop the old application's login, sync, refresh, and other token consumers before cutover. Users must authorize again; **do not copy existing tokens** into the new database.
 
+**Launch precondition:** if old RunCoach continues operating, standalone must use a distinct Strava registration approved for this use case. After credentials have been stored, changing the registration is also a deliberate cutover/reconnection operation, not simply editing `STRAVA_CLIENT_ID`/`STRAVA_CLIENT_SECRET`: existing refresh tokens belong to the previous client. Stop affected token consumers, handle the previous credentials/grants through an administrator-controlled process, and require fresh authorization under the new registration before resuming.
+
 The independent adapter follows patterns already present in:
 
 - `../backend/src/config/strava.ts`: authorization, token, and API base URLs.
@@ -224,7 +226,7 @@ Implemented component boundaries:
 - **Runtime:** independent Node service/startup, production configuration, fixed external HTTPS origin, and trusted Azure managed-ingress handling. Reject invalid standalone keys/configuration before serving requests.
 - **Infrastructure/deployment:** isolated resources in `infra/mcp.bicep`; a separate `.github/workflows/deploy-mcp.yml` targeting the **`ProdMcp`** GitHub environment, not the old application's production workflow/environment.
 
-The full-stack workflow's push paths are limited to `backend/**`, `frontend/**`, `agent-service/**`, `infra/main.bicep`, and `infra/resources.bicep`; its own workflow path is not a push trigger. MCP, documentation, and workflow-isolation changes therefore do not trigger a full-stack redeployment on merge. The old workflow retains manual dispatch; keep its `Prod` approval protections in place. The MCP template uses explicit new resource names and must not touch old apps.
+The full-stack workflow's automatic deployment requires `main`/`master`, a matching push path (`backend/**`, `frontend/**`, `agent-service/**`, `infra/main.bicep`, or `infra/resources.bicep`), and the repository-level opt-in `vars.ENABLE_FULL_STACK_DEPLOYMENT == 'true'`. Its own workflow path is not a push trigger. **Leave `ENABLE_FULL_STACK_DEPLOYMENT` unset for the MCP-only launch**: the initial PR may also contain earlier full-stack changes, so path filtering alone is insufficient protection. The old workflow retains manual dispatch; keep its `Prod` approval protections in place. The MCP template uses explicit new resource names and must not touch old apps.
 
 ### Administrator bootstrap
 
@@ -306,7 +308,7 @@ The template creates a dedicated user-assigned deployment identity and federated
 | Variable `MCP_CLIENT_ID` | Same confidential ChatGPT client ID passed to bootstrap |
 | Variable `MCP_POSTGRES_HOST` | Output `postgresHost`, the dedicated MCP PostgreSQL hostname |
 
-These Azure identifiers/URLs are not passwords; their storage as environment secrets matches the workflow interface. Application secrets remain provisioned app settings, not ZIP contents or workflow output. Register output `stravaCallbackUrl` with the selected Strava application. The workflow checks its target/settings against this environment before deploying.
+These Azure identifiers/URLs are not passwords; their storage as environment secrets matches the workflow interface. Application secrets remain provisioned app settings, not ZIP contents or workflow output. Register output `stravaCallbackUrl` with the selected Strava application. Before deploying, the workflow validates the app/public origin, exact Strava callback, persistent encryption key, and database URL against the dedicated `MCP_POSTGRES_HOST`, `runcoach_mcp` database, and `sslmode=verify-full`. Settings are inspected in memory without writing credential files or printing secrets.
 
 The template persists secure bootstrap values in Azure App Service's encrypted app settings; it does **not** provision Key Vault or Key Vault references. Keep the source encryption key and other secrets in a protected secret manager/Key Vault out of band for recovery and redeployment. The template sets `PORT=8080`, overriding the local default `3002`.
 
@@ -342,7 +344,8 @@ The protected resource is `MCP_PUBLIC_URL` plus `/mcp`, with the scope `runcoach
 - Refresh tokens rotate; grant revocation invalidates all associated MCP tokens, including previously issued access tokens.
 - Revoking this MCP connection does **not** call Strava's app-wide deauthorization endpoint, which could also disconnect RunCoach.
 - Data already shared with ChatGPT is not deleted by revoking access.
-- Standalone cleanup removes expired OAuth/grant/connection records but retains encrypted credential rows, including after denied or revoked grants, to protect overlapping authorization flows. Denial/revocation neither deauthorizes Strava nor erases encrypted upstream credentials. Retention does not restore access: MCP grant/token checks enforce revocation immediately. Establish an administrator-controlled retention/purge process that accounts for other active grants and concurrent flows; deleting credentials requires reauthorization.
+- Standalone cleanup expires OAuth requests/tokens/grants/connections only. Denied, revoked, and orphan encrypted credential rows are retained **indefinitely until deliberate operator purge**; no automatic credential pruning is implemented, because it could race with in-flight authorization. MCP grant/token revocation immediately removes MCP access but neither erases upstream credentials nor revokes the Strava application's authorization; users can separately revoke the app in Strava.
+- To purge standalone credentials, stop **all MCP replicas and token workers**, confirm no live grants or pending authorization flows depend on the intended rows, delete only those standalone credential rows, and then resume. Subsequent access requires fresh authorization. Never delete shared-mode `public.users` tokens as part of an MCP retention purge.
 - Do not log authorization headers, callback query strings, cookies, token responses, encryption keys, or upstream error bodies. Apply the same redaction at the reverse proxy.
 - Keep PostgreSQL backups and access controls protected. Standalone needs only its own database/schema. Shared mode additionally needs `public.users` identity/credential columns, not RunCoach's other data tables.
 - Strava API limits apply per registration (shared with RunCoach only in shared mode). Summaries can require multiple requests; surface upstream throttling and bounded retrieval to the client.
@@ -360,17 +363,23 @@ cd "$REPO_ROOT/mcp-server"
 npm test
 ```
 
-Tests use synthetic users and mocked Strava responses; they do not need real Strava credentials or send athlete data to Strava. Database suites are opt-in: `MCP_TEST_DATABASE_URL` enables shared OAuth/HTTP integration, while `MCP_STORAGE_TEST_DATABASE_URL` enables storage integration. Give each a **separate empty disposable database** whose name ends in `_test`, because their destructive setup must not collide:
+Tests use synthetic users and mocked Strava responses; they do not need real Strava credentials or send athlete data to Strava. Database suites are opt-in: `MCP_TEST_DATABASE_URL` enables shared OAuth/HTTP integration, `MCP_STORAGE_TEST_DATABASE_URL` enables storage integration, `MCP_STANDALONE_TEST_DATABASE_URL` enables the standalone HTTP/OAuth pipeline without `public.users`, and `MCP_STARTUP_TEST_DATABASE_URL` enables packaged-artifact startup verification. Give each a **separate empty disposable database** whose name ends in `_test`, because their destructive setup must not collide:
 
 ```bash
 cd "$REPO_ROOT/mcp-server"
 MCP_TEST_DATABASE_URL=postgresql://localhost:5432/runcoach_mcp_oauth_test \
 MCP_STORAGE_TEST_DATABASE_URL=postgresql://localhost:5432/runcoach_mcp_storage_test \
+MCP_STANDALONE_TEST_DATABASE_URL=postgresql://localhost:5432/runcoach_mcp_standalone_test \
+MCP_STARTUP_TEST_DATABASE_URL="${MCP_STARTUP_TEST_DATABASE_URL:?Set a self-contained disposable startup-test URL first}" \
 npm test
 npm run check
 ```
 
-**Never use either production database for tests.** Integration tests create/truncate synthetic tables, including test `public.users` for shared compatibility. Use separate empty disposable databases ending in `_test`; `npm test` without either variable skips both database suites. Never point destructive tests at the Azure MCP database or the old RunCoach database. The workflow's validation does not imply database coverage unless these isolated test databases are explicitly configured.
+Replace these examples with your disposable local database connections. Before running the command, securely populate `MCP_STARTUP_TEST_DATABASE_URL` in your environment with a self-contained connection to the fourth disposable database, `runcoach_mcp_startup_test`. The startup suite's child process intentionally omits inherited `PG*` settings, so its URL must include the disposable login/password when required; it cannot rely on `PGUSER`/`PGPASSWORD` alone. Use synthetic test credentials only, without committing or printing the populated URL.
+
+**Never use either production database for tests.** Integration tests create/truncate synthetic tables, including test `public.users` for shared compatibility; the standalone pipeline resets only its disposable MCP schema. Use separate empty disposable databases ending in `_test`; local `npm test` without these variables skips all four database suites. Never point destructive tests at the Azure MCP database or the old RunCoach database.
+
+The MCP workflow automatically starts a health-checked disposable PostgreSQL 16 service, creates four distinct synthetic `_test` databases, sets all four variables, and runs `npm test -- --test-concurrency=1` for shared OAuth, storage, standalone HTTP/OAuth, and packaged-artifact startup integration. Its database tests do not use Azure PostgreSQL or real Strava credentials and need no additional GitHub secrets/variables.
 
 Trace configuration through the selected storage/proxy modes during validation: use synthetic credentials and mocked upstream responses, verify the fixed public origin and actual Host checks, and reject spoofed forwarded headers/protocol lists. These checks do not establish live Azure ingress or ChatGPT compatibility.
 

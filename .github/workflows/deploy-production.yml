@@ -28,7 +28,9 @@ env:
 jobs:
   preflight:
     name: Validate deployment configuration
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    if: >-
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') &&
+      (github.event_name == 'workflow_dispatch' || vars.ENABLE_FULL_STACK_DEPLOYMENT == 'true')
     runs-on: ubuntu-latest
     environment: Prod
     steps:

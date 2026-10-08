@@ -140,7 +140,7 @@ The migration lock does not serialize all application background jobs. Keep the 
 
 ## 4. Deploy code
 
-`.github/workflows/deploy-production.yml` runs on pushes to `main`/`master` and manual dispatch; preflight explicitly permits only `refs/heads/main` or `refs/heads/master`. Protect those branches with required reviews/checks. Restrict **Prod** deployment branches to `main`/`master`, require deployment approvals where supported, and run manual deployments only from a reviewed trusted branch/ref. The environment-based OIDC subject does not itself enforce branch trust.
+`.github/workflows/deploy-production.yml` permits only `main`/`master`. Manual dispatch remains available; automatic pushes affecting full-stack code or infrastructure require the repository variable `ENABLE_FULL_STACK_DEPLOYMENT=true`. Leave this variable unset when launching only MCP, including when earlier full-stack changes are in the same pull request. Protect those branches with required reviews/checks. Restrict **Prod** deployment branches to `main`/`master`, require deployment approvals where supported, and run manual deployments only from a reviewed trusted branch/ref. The environment-based OIDC subject does not itself enforce branch trust.
 
 The workflow uses Node.js 22, validates all required configuration before deployment, builds deployable ZIPs, and authenticates with `azure/login@v2` using OIDC. Federation is:
 

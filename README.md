@@ -201,7 +201,7 @@ Migrations are run automatically when the backend starts.
 
 ### Azure Production Deployment
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for Azure resource provisioning, safe database initialization, and live verification, and [GITHUB_SECRETS.md](GITHUB_SECRETS.md) for the `Prod` environment's OIDC configuration. GitHub Actions redeploys all three App Services on reviewed pushes to `main`/`master`; infrastructure must be provisioned first.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for Azure resource provisioning, safe database initialization, and live verification, and [GITHUB_SECRETS.md](GITHUB_SECRETS.md) for the `Prod` environment's OIDC configuration. Full-stack deployment is available by manual dispatch; automatic deployment on reviewed pushes to `main`/`master` requires the repository variable `ENABLE_FULL_STACK_DEPLOYMENT=true`. Leave it unset for an MCP-only launch. Infrastructure must be provisioned first.
 
 ### Standalone Strava MCP Deployment
 
