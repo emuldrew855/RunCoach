@@ -1,28 +1,79 @@
-name: Deploy to Azure Production (West Europe)
+name: Deploy to Azure Production
 
 on:
   push:
     branches:
       - main
       - master
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'agent-service/**'
+      - 'infra/main.bicep'
+      - 'infra/resources.bicep'
   workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: azure-production
+  cancel-in-progress: false
+
 env:
-  NODE_VERSION: '18'
-  AZURE_RESOURCE_GROUP: runcoach-rg
-  AZURE_REGION: westeurope
+  NODE_VERSION: '22'
   NODE_OPTIONS: --max-old-space-size=8192
 
 jobs:
+  preflight:
+    name: Validate deployment configuration
+    if: >-
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') &&
+      (github.event_name == 'workflow_dispatch' || vars.ENABLE_FULL_STACK_DEPLOYMENT == 'true')
+    runs-on: ubuntu-latest
+    environment: Prod
+    steps:
+      - name: Check required configuration
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_BACKEND_APP_NAME: ${{ secrets.AZURE_BACKEND_APP_NAME }}
+          AZURE_AGENT_APP_NAME: ${{ secrets.AZURE_AGENT_APP_NAME }}
+          AZURE_FRONTEND_APP_NAME: ${{ secrets.AZURE_FRONTEND_APP_NAME }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          AGENT_URL: ${{ secrets.AGENT_URL }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_STRAVA_CLIENT_ID: ${{ secrets.VITE_STRAVA_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID \
+            AZURE_BACKEND_APP_NAME AZURE_AGENT_APP_NAME AZURE_FRONTEND_APP_NAME \
+            BACKEND_URL AGENT_URL FRONTEND_URL VITE_API_URL VITE_STRAVA_CLIENT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing Prod secret: $name"
+              exit 1
+            fi
+          done
+          for name in BACKEND_URL AGENT_URL FRONTEND_URL; do
+            if [[ ! "${!name}" =~ ^https://[^/]+$ ]]; then
+              echo "::error::$name must be an HTTPS origin without a trailing slash"
+              exit 1
+            fi
+          done
+          if [ "$VITE_API_URL" != "$BACKEND_URL/api/v1" ]; then
+            echo "::error::VITE_API_URL must be BACKEND_URL followed by /api/v1"
+            exit 1
+          fi
+
   # Backend deployment
   deploy-backend:
     name: Deploy Backend to Azure App Service
     runs-on: ubuntu-latest
     environment: Prod
+    needs: [preflight]
 
     steps:
       - name: Checkout code
@@ -39,7 +90,7 @@ jobs:
 
       - name: Run tests
         working-directory: ./backend
-        run: npm test || echo "No tests configured"
+        run: npm run test --if-present
 
       - name: Build backend
         working-directory: ./backend
@@ -50,8 +101,9 @@ jobs:
       - name: Create deployment package
         working-directory: ./backend
         run: |
-          mkdir -p deploy
+          mkdir -p deploy/scripts
           cp -r dist package.json package-lock.json deploy/
+          cp scripts/migrate.js scripts/migrationRunner.js deploy/scripts/
           if [ -d migrations ]; then cp -r migrations deploy/; fi
           # Include .deployment to prevent Azure from running its own build
           if [ -f .deployment ]; then cp .deployment deploy/; fi
@@ -73,6 +125,22 @@ jobs:
           app-name: ${{ secrets.AZURE_BACKEND_APP_NAME }}
           package: ./backend/backend-deploy.zip
 
+      - name: Wait for backend startup and migrations
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+        run: |
+          set -euo pipefail
+          sleep 30
+          for i in $(seq 1 30); do
+            code=$(curl --connect-timeout 10 --max-time 20 -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/health" || true)
+            if [ "$code" = "200" ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Backend failed to start; check App Service startup and migration logs"
+          exit 1
+
       - name: Azure logout
         run: az logout || true
         if: always()
@@ -82,6 +150,7 @@ jobs:
     name: Deploy Agent Service to Azure App Service
     runs-on: ubuntu-latest
     environment: Prod
+    needs: [deploy-backend]
 
     steps:
       - name: Checkout code
@@ -162,8 +231,7 @@ jobs:
       - name: Create deployment package
         working-directory: ./frontend
         run: |
-          cd dist
-          zip -r ../frontend-deploy.zip .
+          zip -r frontend-deploy.zip dist server.mjs
 
       - name: Azure Login
         uses: azure/login@v2
@@ -194,14 +262,16 @@ jobs:
         run: sleep 30
 
       - name: Check backend health (retry)
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
         run: |
           set -e
-          url="${{ secrets.BACKEND_URL }}/health"
+          url="$BACKEND_URL/health"
           echo "Checking: $url"
 
           # Try for up to 3 minutes (18 * 10s)
           for i in $(seq 1 18); do
-            code=$(curl -s -o /tmp/backend_health_body.txt -w "%{http_code}" "$url" || true)
+            code=$(curl --connect-timeout 10 --max-time 20 -s -o /tmp/backend_health_body.txt -w "%{http_code}" "$url" || true)
             if [ "$code" = "200" ]; then
               echo "Backend health check passed"
               cat /tmp/backend_health_body.txt || true
@@ -218,14 +288,16 @@ jobs:
           exit 1
 
       - name: Check agent service health (retry)
+        env:
+          AGENT_URL: ${{ secrets.AGENT_URL }}
         run: |
           set -e
-          url="${{ secrets.AGENT_URL }}/health"
+          url="$AGENT_URL/health"
           echo "Checking: $url"
 
           # Try for up to 5 minutes (30 * 10s) - agent takes longer to warm up
           for i in $(seq 1 30); do
-            code=$(curl -s -o /tmp/agent_health_body.txt -w "%{http_code}" "$url" || true)
+            code=$(curl --connect-timeout 10 --max-time 20 -s -o /tmp/agent_health_body.txt -w "%{http_code}" "$url" || true)
             if [ "$code" = "200" ]; then
               echo "Agent service health check passed"
               cat /tmp/agent_health_body.txt || true
@@ -242,16 +314,21 @@ jobs:
           exit 1
 
       - name: Check frontend (retry)
+        env:
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
         run: |
           set -e
-          url="${{ secrets.FRONTEND_URL }}"
+          url="$FRONTEND_URL"
           echo "Checking: $url"
 
           # Try for up to 2 minutes (12 * 10s)
           for i in $(seq 1 12); do
-            code=$(curl -s -o /tmp/frontend_body.txt -w "%{http_code}" "$url" || true)
+            code=$(curl --connect-timeout 10 --max-time 20 -s -o /tmp/frontend_body.txt -w "%{http_code}" "$url" || true)
             if [ "$code" = "200" ]; then
               echo "Frontend health check passed"
+              curl --fail --connect-timeout 10 --max-time 20 -s "$url/dashboard" > /tmp/frontend_route_body.txt
+              cmp /tmp/frontend_body.txt /tmp/frontend_route_body.txt
+              echo "Frontend deep-link refresh passed"
               exit 0
             fi
 
@@ -264,8 +341,12 @@ jobs:
 
       - name: Notify deployment success
         if: success()
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          AGENT_URL: ${{ secrets.AGENT_URL }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
         run: |
-          echo "Deployment successful to West Europe!"
-          echo "Backend: ${{ secrets.BACKEND_URL }}"
-          echo "Agent: ${{ secrets.AGENT_URL }}"
-          echo "Frontend: ${{ secrets.FRONTEND_URL }}"
+          echo "Deployment successful!"
+          echo "Backend: $BACKEND_URL"
+          echo "Agent: $AGENT_URL"
+          echo "Frontend: $FRONTEND_URL"
