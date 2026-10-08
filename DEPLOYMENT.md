@@ -1,838 +1,167 @@
-# RunCoach Azure Deployment Plan
+# RunCoach Production Deployment
 
-## Overview
+## Status and prerequisites
 
-Deploy the RunCoach application to Azure with a focus on **cost optimization**, **reliability**, and **performance**.
+This is a provisioning and deployment runbook, not a record of a live deployment. No Azure resources can be provisioned or production smoke tests completed until the owner supplies the Azure subscription/tenant, approved region and budget, appropriate Azure access, and Strava/OpenAI credentials.
 
-**Estimated Monthly Cost**: ~$30-40 USD
-**Target Users**: 100-500 concurrent users
-**Uptime Target**: 99.9% (managed services SLA)
+Before proceeding:
 
----
+- Choose an Azure region supporting Linux App Service and PostgreSQL Flexible Server, and confirm SKU availability and quotas (including B1 if selected). PostgreSQL SKU name and tier must match.
+- Approve costs using the current Azure pricing calculator for that region: one shared App Service plan, PostgreSQL compute/storage/backups, networking/egress, optional monitoring, and OpenAI usage. Defaults are starting points, not a capacity, price, uptime, or high-availability guarantee.
+- Install Azure CLI with Bicep support and use Node.js 22 for local builds.
+- Have subscription resource-creation access plus permission to create resource-group role assignments (for example, Owner, or Contributor plus Role Based Access Control Administrator). The later GitHub deployment identity only needs resource-group Contributor.
+- Configure repository branch protection and the GitHub **Prod** environment as described in [GITHUB_SECRETS.md](GITHUB_SECRETS.md).
 
-## Architecture Overview
+## Architecture and runtime
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Azure Cloud                             │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌─────────────────────────────────┐                           │
-│  │  Azure Static Web Apps          │                           │
-│  │  (Frontend - React/Vite)        │                           │
-│  │  • Global CDN distribution      │                           │
-│  │  • Free SSL certificate         │                           │
-│  │  • Custom domain support        │                           │
-│  │  Cost: FREE (or $9/month)       │                           │
-│  └─────────────────────────────────┘                           │
-│              │                                                  │
-│              │ HTTPS                                            │
-│              ▼                                                  │
-│  ┌─────────────────────────────────┐                           │
-│  │  Azure App Service (Basic B1)   │                           │
-│  │  (Backend - Node.js API)        │                           │
-│  │  • 1.75 GB RAM, 1 vCPU          │                           │
-│  │  • Auto SSL, custom domain      │                           │
-│  │  • Built-in monitoring          │                           │
-│  │  • WebJobs for cron             │                           │
-│  │  Cost: ~$13/month               │                           │
-│  └─────────────────────────────────┘                           │
-│              │                                                  │
-│              │ PostgreSQL connection                            │
-│              ▼                                                  │
-│  ┌─────────────────────────────────┐                           │
-│  │  Azure Database for PostgreSQL  │                           │
-│  │  Flexible Server (Burstable)    │                           │
-│  │  • B1ms (1 vCore, 2GB RAM)      │                           │
-│  │  • 32 GB storage                │                           │
-│  │  • Automated backups (7 days)   │                           │
-│  │  Cost: ~$12-15/month            │                           │
-│  └─────────────────────────────────┘                           │
-│                                                                 │
-│  ┌─────────────────────────────────┐                           │
-│  │  Application Insights           │                           │
-│  │  (Monitoring & Logging)         │                           │
-│  │  Cost: FREE (basic tier)        │                           │
-│  └─────────────────────────────────┘                           │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+`infra/main.bicep` is a subscription-scope entry point. It creates the resource group and invokes `infra/resources.bicep` to create:
 
-External Services:
-  • Strava API (free)
-  • OpenAI API (pay per use, ~$5-20/month depending on usage)
-```
+| Component | Production configuration |
+| --- | --- |
+| Backend | Linux Node.js 22 App Service; startup `npm start`; built `dist/`, `scripts/migrate.js`/`scripts/migrationRunner.js`, SQL migrations, and production dependencies |
+| Agent | Separate Linux Node.js 22 App Service; startup `npm start`; production dependencies and built `dist/` |
+| Frontend | Separate Linux Node.js 22 App Service; ZIP contains `dist/` and `server.mjs`; startup `node server.mjs` |
+| Hosting | All three apps share one Linux App Service plan; default B1, capacity one |
+| Database | PostgreSQL Flexible Server 16; default Burstable `Standard_B1ms`, 32 GB storage |
+| Network | Private PostgreSQL delegated subnet and linked private DNS; backend and agent integrate with a separate App Service delegated subnet |
+| Deployment identity | User-assigned managed identity, GitHub OIDC federation, Contributor scoped to this resource group |
 
----
+The frontend uses the native Node static SPA server, not a development server or an additional static-hosting product. Client-side routes such as `/dashboard` fall back to `dist/index.html`; generated assets are served from `dist/`. App Service supplies the listening port (configured as 8080). ZIP packages are built in CI, with Azure-side build disabled.
 
-## Cost Breakdown
+All App Services enforce HTTPS, minimum TLS 1.2 for app/SCM endpoints, Always On, and disabled FTP. These settings do not remove the need for authentication or app monitoring. Backend and agent HTTP endpoints remain public; VNet integration provides outbound access to the private database, not private inbound app access.
 
-| Service | Tier | Monthly Cost | Notes |
-|---------|------|--------------|-------|
-| **Frontend** | Azure Static Web Apps (Free) | $0 | 100 GB bandwidth/month included |
-| **Backend** | App Service Basic B1 | $13 | 1.75 GB RAM, 10 GB storage |
-| **Database** | PostgreSQL Flexible B1ms | $12-15 | Burstable, 2 GB RAM, 32 GB storage |
-| **Monitoring** | Application Insights (Basic) | $0 | 5 GB data/month free |
-| **OpenAI API** | Pay-per-use | $5-20 | Depends on usage (GPT-4o calls) |
-| **Storage** | Blob Storage (optional) | $1-2 | For training plan uploads |
-| **TOTAL** | | **~$30-50/month** | Scalable as needed |
+PostgreSQL public network access is disabled, with secure transport required. The template constructs a shared `DATABASE_URL` with URL-encoded username/password and `sslmode=verify-full` for CA and hostname verification. Never disable certificate validation to troubleshoot a connection.
 
----
+The template allowlists `VECTOR,UUID-OSSP` using PostgreSQL's `azure.extensions` setting. SQL migrations create the `vector` and `"uuid-ossp"` extensions inside the database; allowlisting alone does not create them. Check region/server extension support and database-user extension permissions before migration.
 
-## Phase 1: Prerequisites & Setup (30 minutes)
+Backups default to seven days (configurable from 7–35 days); geo-redundant backup and high availability are disabled in this baseline. Agree on recovery objectives before approving production use.
 
-### 1.1 Azure Account Setup
+Storage autogrow is disabled for the default Burstable tier and enabled for the other supported tiers. Monitor free storage and plan manual capacity increases for Burstable; do not assume the default 32 GB expands automatically.
 
-1. **Create Azure Account**
-   - Go to: https://azure.microsoft.com/free
-   - Sign up for free account ($200 credit for 30 days)
-   - Verify payment method (required but won't charge unless you upgrade)
+## 1. Bootstrap infrastructure securely
 
-2. **Install Azure CLI**
-   ```bash
-   # Windows (using winget)
-   winget install Microsoft.AzureCLI
+Infrastructure provisioning is a separate owner/operator step, not performed by the code-deployment workflow. Do not give the CI identity subscription-wide permissions just to bootstrap its own resource group.
 
-   # Or download from: https://aka.ms/installazurecliwindows
-   ```
+1. Sign in with the approved provisioning identity and select the subscription:
 
-3. **Login to Azure**
    ```bash
    az login
-   az account list --output table
-   az account set --subscription "<your-subscription-id>"
+   az account set --subscription "<subscription-id>"
+   REPO_ROOT="/home/runner/work/RunCoach/RunCoach"
    ```
 
-### 1.2 Create Resource Group
-
-```bash
-# Set variables
-$RESOURCE_GROUP="runcoach-prod"
-$LOCATION="eastus"  # or "westeurope", "southeastasia" (choose nearest region)
-
-# Create resource group
-az group create --name $RESOURCE_GROUP --location $LOCATION
-```
-
----
-
-## Phase 2: Database Deployment (20 minutes)
-
-### 2.1 Create PostgreSQL Flexible Server
-
-```bash
-# Set database variables
-$DB_SERVER_NAME="runcoach-db-$(Get-Random -Maximum 9999)"
-$DB_ADMIN_USER="runcoach_admin"
-$DB_ADMIN_PASSWORD="SecurePass123!$(Get-Random -Maximum 999)"  # Change this!
-$DB_NAME="runcoach"
-
-# Create PostgreSQL server
-az postgres flexible-server create `
-  --resource-group $RESOURCE_GROUP `
-  --name $DB_SERVER_NAME `
-  --location $LOCATION `
-  --admin-user $DB_ADMIN_USER `
-  --admin-password $DB_ADMIN_PASSWORD `
-  --sku-name Standard_B1ms `
-  --tier Burstable `
-  --storage-size 32 `
-  --version 14 `
-  --public-access 0.0.0.0
-
-# Create database
-az postgres flexible-server db create `
-  --resource-group $RESOURCE_GROUP `
-  --server-name $DB_SERVER_NAME `
-  --database-name $DB_NAME
-
-# Enable SSL (recommended)
-az postgres flexible-server parameter set `
-  --resource-group $RESOURCE_GROUP `
-  --server-name $DB_SERVER_NAME `
-  --name require_secure_transport `
-  --value ON
-
-# Save connection string
-$DB_CONNECTION_STRING="postgresql://${DB_ADMIN_USER}:${DB_ADMIN_PASSWORD}@${DB_SERVER_NAME}.postgres.database.azure.com/${DB_NAME}?sslmode=require"
-
-Write-Host "Database Connection String: $DB_CONNECTION_STRING"
-# SAVE THIS CONNECTION STRING - you'll need it!
-```
-
-### 2.2 Configure Firewall Rules
-
-```bash
-# Allow Azure services to access database
-az postgres flexible-server firewall-rule create `
-  --resource-group $RESOURCE_GROUP `
-  --name $DB_SERVER_NAME `
-  --rule-name AllowAzureServices `
-  --start-ip-address 0.0.0.0 `
-  --end-ip-address 0.0.0.0
-
-# Allow your local IP for migrations (find your IP at https://whatismyip.com)
-$MY_IP="<your-public-ip>"
-az postgres flexible-server firewall-rule create `
-  --resource-group $RESOURCE_GROUP `
-  --name $DB_SERVER_NAME `
-  --rule-name AllowMyIP `
-  --start-ip-address $MY_IP `
-  --end-ip-address $MY_IP
-```
-
-### 2.3 Run Database Migrations
-
-```bash
-# Update local .env with Azure database connection string
-# Then run migrations locally
-cd backend
-$env:DATABASE_URL = "$DB_CONNECTION_STRING"
-npm run migrate  # Or: node -r dotenv/config -e "require('./src/config/database').runMigrations()"
-
-# Verify migrations worked
-psql "$DB_CONNECTION_STRING" -c "\dt"
-```
-
----
-
-## Phase 3: Backend Deployment (30 minutes)
-
-### 3.1 Create App Service Plan
-
-```bash
-$APP_SERVICE_PLAN="runcoach-plan"
-
-az appservice plan create `
-  --name $APP_SERVICE_PLAN `
-  --resource-group $RESOURCE_GROUP `
-  --location $LOCATION `
-  --sku B1 `
-  --is-linux
-```
-
-### 3.2 Create Web App
-
-```bash
-$BACKEND_APP_NAME="runcoach-api-$(Get-Random -Maximum 9999)"
-
-az webapp create `
-  --resource-group $RESOURCE_GROUP `
-  --plan $APP_SERVICE_PLAN `
-  --name $BACKEND_APP_NAME `
-  --runtime "NODE:18-lts" `
-  --deployment-local-git
-
-# Enable HTTPS only
-az webapp update `
-  --resource-group $RESOURCE_GROUP `
-  --name $BACKEND_APP_NAME `
-  --https-only true
-
-# Set always on (keeps app warm)
-az webapp config set `
-  --resource-group $RESOURCE_GROUP `
-  --name $BACKEND_APP_NAME `
-  --always-on true
-```
-
-### 3.3 Configure Environment Variables
-
-```bash
-# Generate a secure JWT secret
-$JWT_SECRET = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 64 | ForEach-Object {[char]$_})
-
-# Set all environment variables
-az webapp config appsettings set `
-  --resource-group $RESOURCE_GROUP `
-  --name $BACKEND_APP_NAME `
-  --settings `
-    NODE_ENV=production `
-    PORT=8080 `
-    DATABASE_URL="$DB_CONNECTION_STRING" `
-    JWT_SECRET="$JWT_SECRET" `
-    JWT_EXPIRES_IN=7d `
-    STRAVA_CLIENT_ID="<your-strava-client-id>" `
-    STRAVA_CLIENT_SECRET="<your-strava-client-secret>" `
-    STRAVA_REDIRECT_URI="https://${BACKEND_APP_NAME}.azurewebsites.net/api/v1/auth/callback" `
-    OPENAI_API_KEY="<your-openai-api-key>" `
-    OPENAI_MODEL="gpt-4o" `
-    OPENAI_MAX_TOKENS=1000 `
-    FRONTEND_URL="https://<your-static-web-app>.azurestaticapps.net"
-```
-
-### 3.4 Deploy Backend Code
-
-**Option A: Deploy from Local Git**
-
-```bash
-# Get Git credentials
-az webapp deployment list-publishing-credentials `
-  --resource-group $RESOURCE_GROUP `
-  --name $BACKEND_APP_NAME
-
-# Add Azure remote
-cd backend
-git init
-git add .
-git commit -m "Initial backend deployment"
-git remote add azure "https://${BACKEND_APP_NAME}.scm.azurewebsites.net/${BACKEND_APP_NAME}.git"
-
-# Push to Azure
-git push azure main
-```
-
-**Option B: Deploy from GitHub Actions (Recommended)**
-
-Create `.github/workflows/deploy-backend.yml`:
-
-```yaml
-name: Deploy Backend to Azure
-
-on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'backend/**'
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Install dependencies
-        working-directory: ./backend
-        run: npm ci
-
-      - name: Build
-        working-directory: ./backend
-        run: npm run build
-
-      - name: Deploy to Azure
-        uses: azure/webapps-deploy@v2
-        with:
-          app-name: ${{ secrets.AZURE_BACKEND_APP_NAME }}
-          publish-profile: ${{ secrets.AZURE_BACKEND_PUBLISH_PROFILE }}
-          package: ./backend
-```
-
-### 3.5 Configure App Service for Node.js
-
-Create `backend/web.config`:
-
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <system.webServer>
-    <handlers>
-      <add name="iisnode" path="dist/index.js" verb="*" modules="iisnode"/>
-    </handlers>
-    <rewrite>
-      <rules>
-        <rule name="DynamicContent">
-          <match url="/*" />
-          <action type="Rewrite" url="dist/index.js"/>
-        </rule>
-      </rules>
-    </rewrite>
-    <security>
-      <requestFiltering>
-        <hiddenSegments>
-          <add segment="node_modules" />
-        </hiddenSegments>
-      </requestFiltering>
-    </security>
-  </system.webServer>
-</configuration>
-```
-
-Update `backend/package.json` with startup script:
-
-```json
-{
-  "scripts": {
-    "start": "node dist/index.js",
-    "build": "tsc",
-    "postinstall": "npm run build"
-  }
-}
-```
-
-### 3.6 Set Up Cron Job for Weekly Analysis
-
-**Option A: Azure App Service WebJob**
-
-Create `backend/webjob-cron/run.js`:
-
-```javascript
-// WeJob script to run Monday analysis
-const https = require('https');
-
-const API_URL = process.env.BACKEND_URL || 'https://runcoach-api.azurewebsites.net';
-
-https.get(`${API_URL}/api/v1/analysis/trigger-all`, (res) => {
-  console.log(`Status: ${res.statusCode}`);
-  res.on('data', (d) => process.stdout.write(d));
-}).on('error', (e) => {
-  console.error(e);
-  process.exit(1);
-});
-```
-
-Create `backend/webjob-cron/settings.job`:
-
-```json
-{
-  "schedule": "0 0 6 * * 1"
-}
-```
-
-Upload as ZIP to Azure Portal > App Service > WebJobs.
-
-**Option B: Azure Functions (Timer Trigger) - Recommended**
-
-Create separate Azure Function:
-
-```bash
-# Install Azure Functions Core Tools
-npm install -g azure-functions-core-tools@4
-
-# Create function app
-func init WeeklyAnalysisFunction --typescript
-cd WeeklyAnalysisFunction
-func new --name WeeklyAnalysis --template "Timer trigger"
-```
-
-Update `WeeklyAnalysis/function.json`:
-
-```json
-{
-  "bindings": [
-    {
-      "name": "myTimer",
-      "type": "timerTrigger",
-      "direction": "in",
-      "schedule": "0 0 6 * * 1"
-    }
-  ]
-}
-```
-
-Update `WeeklyAnalysis/index.ts`:
-
-```typescript
-import { AzureFunction, Context } from "@azure/functions";
-import axios from "axios";
-
-const timerTrigger: AzureFunction = async function (context: Context, myTimer: any): Promise<void> {
-    const API_URL = process.env.BACKEND_URL;
-
-    try {
-        const response = await axios.post(`${API_URL}/api/v1/analysis/trigger-all`);
-        context.log('Weekly analysis triggered successfully:', response.data);
-    } catch (error) {
-        context.log.error('Failed to trigger weekly analysis:', error);
-    }
-};
-
-export default timerTrigger;
-```
-
-Deploy function:
-
-```bash
-func azure functionapp publish runcoach-functions
-```
-
----
-
-## Phase 4: Frontend Deployment (20 minutes)
-
-### 4.1 Create Static Web App
-
-```bash
-$STATIC_APP_NAME="runcoach-web"
-
-az staticwebapp create `
-  --name $STATIC_APP_NAME `
-  --resource-group $RESOURCE_GROUP `
-  --location $LOCATION `
-  --sku Free `
-  --source https://github.com/<your-username>/runcoach `
-  --branch main `
-  --app-location "/frontend" `
-  --output-location "dist"
-```
-
-### 4.2 Configure Environment Variables
-
-In Azure Portal:
-1. Go to Static Web App > Configuration
-2. Add Application Settings:
-   - `VITE_API_URL`: `https://<your-backend-app>.azurewebsites.net/api/v1`
-
-Or via CLI:
-
-```bash
-az staticwebapp appsettings set `
-  --name $STATIC_APP_NAME `
-  --setting-names VITE_API_URL="https://${BACKEND_APP_NAME}.azurewebsites.net/api/v1"
-```
-
-### 4.3 Deploy via GitHub Actions (Automatic)
-
-Create `.github/workflows/deploy-frontend.yml`:
-
-```yaml
-name: Deploy Frontend to Azure Static Web Apps
-
-on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'frontend/**'
-  pull_request:
-    types: [opened, synchronize, reopened, closed]
-    branches:
-      - main
-
-jobs:
-  build_and_deploy:
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
-    runs-on: ubuntu-latest
-    name: Build and Deploy
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: true
-
-      - name: Build And Deploy
-        uses: Azure/static-web-apps-deploy@v1
-        with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          action: "upload"
-          app_location: "/frontend"
-          output_location: "dist"
-```
-
-Get deployment token:
-
-```bash
-az staticwebapp secrets list `
-  --name $STATIC_APP_NAME `
-  --resource-group $RESOURCE_GROUP `
-  --query "properties.apiKey" -o tsv
-```
-
-Add to GitHub Secrets as `AZURE_STATIC_WEB_APPS_API_TOKEN`.
-
----
-
-## Phase 5: Strava Configuration (5 minutes)
-
-Update Strava API settings:
-
-1. Go to: https://www.strava.com/settings/api
-2. Update **Authorization Callback Domain**:
-   ```
-   <your-backend-app>.azurewebsites.net/api/v1/auth/callback
+   `REPO_ROOT` must be the absolute root of your checkout; replace the shown runner path when operating from another machine.
+
+2. Create an access-restricted JSON parameter file **outside the checkout**, using a trusted local editor or secret-management process. For example, use `$HOME/.config/runcoach/prod.parameters.json`, with directory permissions 700 and file permissions 600. The following is a **placeholder template**, not usable credentials:
+
+   ```json
+   {
+     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+     "contentVersion": "1.0.0.0",
+     "parameters": {
+       "location": { "value": "<approved-azure-region>" },
+       "resourceGroupName": { "value": "runcoach-prod" },
+       "namePrefix": { "value": "runcoach" },
+       "appServiceSku": { "value": "B1" },
+       "postgresSkuName": { "value": "Standard_B1ms" },
+       "postgresSkuTier": { "value": "Burstable" },
+       "postgresStorageSizeGB": { "value": 32 },
+       "postgresBackupRetentionDays": { "value": 7 },
+       "postgresAdministratorLogin": { "value": "runcoachadmin" },
+       "postgresAdministratorPassword": { "value": "<strong-database-password>" },
+       "openaiApiKey": { "value": "<openai-api-key>" },
+       "stravaClientId": { "value": "<strava-client-id>" },
+       "stravaClientSecret": { "value": "<strava-client-secret>" },
+       "jwtSecret": { "value": "<random-secret-at-least-32-characters>" },
+       "serviceSecret": { "value": "<different-random-secret-at-least-32-characters>" },
+       "openaiModel": { "value": "gpt-4o" },
+       "agentMiniModel": { "value": "gpt-4o-mini" },
+       "githubRepository": { "value": "emuldrew855/RunCoach" }
+     }
+   }
    ```
 
----
+   The password, OpenAI key, Strava client secret, JWT secret, and service secret are Bicep `@secure()` inputs. The database password must meet Azure administrator-password complexity requirements and be 8–128 characters; JWT and service secrets must each be at least 32 characters. Keep real values out of Git, shell history, CLI literals, logs, screenshots, and workflow artifacts. Do not generate the real file with a shell command containing credentials. Use an approved secure mechanism to retain or delete the file after provisioning; restricted permissions do not replace encrypted secret storage.
 
-## Phase 6: Monitoring & Logging (15 minutes)
+3. Review and create the subscription deployment:
 
-### 6.1 Enable Application Insights
+   ```bash
+   az deployment sub what-if \
+     --name runcoach-prod-bootstrap \
+     --location "<approved-azure-region>" \
+     --template-file "$REPO_ROOT/infra/main.bicep" \
+     --parameters @"$HOME/.config/runcoach/prod.parameters.json"
 
-```bash
-# Create Application Insights resource
-az monitor app-insights component create `
-  --app runcoach-insights `
-  --location $LOCATION `
-  --resource-group $RESOURCE_GROUP `
-  --application-type web
+   az deployment sub create \
+     --name runcoach-prod-bootstrap \
+     --location "<approved-azure-region>" \
+     --template-file "$REPO_ROOT/infra/main.bicep" \
+     --parameters @"$HOME/.config/runcoach/prod.parameters.json" \
+     --query properties.outputs
+   ```
 
-# Get instrumentation key
-$INSIGHTS_KEY = az monitor app-insights component show `
-  --resource-group $RESOURCE_GROUP `
-  --app runcoach-insights `
-  --query instrumentationKey -o tsv
+   Review output in a trusted terminal; never publish secret-bearing app-setting queries. What-if is not proof that resource providers, quotas, permissions, or runtime connectivity will succeed.
 
-# Link to App Service
-az webapp config appsettings set `
-  --resource-group $RESOURCE_GROUP `
-  --name $BACKEND_APP_NAME `
-  --settings APPLICATIONINSIGHTS_CONNECTION_STRING="InstrumentationKey=$INSIGHTS_KEY"
+4. Use the non-secret deployment outputs to populate the 11 GitHub **Prod environment secrets** in [GITHUB_SECRETS.md](GITHUB_SECRETS.md). Outputs include `backendAppName`, `agentAppName`, `frontendAppName`, `backendUrl`, `agentUrl`, `frontendUrl`, `githubClientId`, `githubTenantId`, and `githubSubscriptionId`.
+5. Set the Strava app's authorization callback domain to the backend hostname (no scheme/path). The backend uses the configured `stravaRedirectUri` output (`<backendUrl>/api/v1/auth/callback`), exchanges the code, then redirects to the frontend `/callback` route. Confirm the complete login flow before launch.
+
+Resource creation does not deploy the application ZIPs. Initial app health may fail until the code is deployed and migrations finish. Re-running infrastructure can overwrite manually changed app settings; retain the intended configuration in the secure provisioning source.
+
+## 2. Runtime secrets and application settings
+
+Bicep configures Azure App Service settings; CI does not read application credentials from GitHub or embed them in frontend bundles.
+
+| App | Settings |
+| --- | --- |
+| Backend | `NODE_ENV=production`, `DATABASE_URL`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `STRAVA_REDIRECT_URI`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `FRONTEND_URL`, `AGENT_SERVICE_URL`, `SERVICE_SECRET` |
+| Agent | `NODE_ENV=production`, `DATABASE_URL`, `OPENAI_API_KEY`, `DEFAULT_MODEL`, `MINI_MODEL`, `BACKEND_API_URL`, `SERVICE_SECRET`, `BACKEND_SERVICE_TOKEN`, `DAILY_TOKEN_LIMIT`, `USE_SUPERVISOR_ARCHITECTURE` |
+| Frontend | Runtime port and deployment settings only; public `VITE_API_URL` and `VITE_STRAVA_CLIENT_ID` are supplied at build time |
+
+The backend/agent `SERVICE_SECRET` and agent `BACKEND_SERVICE_TOKEN` must match. `BACKEND_API_URL` is the backend origin, without `/api/v1`; `AGENT_SERVICE_URL` is the agent origin. `FRONTEND_URL` controls the backend's expected frontend origin. Do not use localhost URLs in production.
+
+Azure app settings are secrets accessible to authorized resource operators; restrict RBAC, audit access, and rotate database/API/JWT/service credentials through the secure provisioning process. Coordinate shared-secret rotation across both apps; JWT rotation invalidates existing tokens. No client secret, database URL, JWT secret, service token, or OpenAI key belongs in any `VITE_*` variable.
+
+## 3. Database initialization and existing deployments
+
+Backend startup runs migrations before listening; `cd "$REPO_ROOT/backend" && npm run migrate` uses the same shared runner when working from a checkout. Run manual database maintenance from an approved host with VNet/private-DNS connectivity and securely supplied `DATABASE_URL`. Public GitHub-hosted runners and ordinary developer laptops cannot directly reach this private database; do not open a public firewall to work around that.
+
+- **Fresh database:** startup creates `public.schema_migrations` and applies SQL files in filename order. Each migration and its filename/SHA-256 record commit atomically.
+- **Tracked database:** only pending migrations run. Changed/missing applied files and gaps before recorded history cause failure. Do not edit previously applied SQL files.
+- **Untracked, nonempty database:** startup and CLI deliberately refuse to proceed. There is no automatic replay or blanket “ignore errors” switch.
+- A shared PostgreSQL advisory lock `(1381322307, 1)` serializes the startup and CLI runners. Failure rolls back the current migration and prevents the backend from becoming ready; previously committed migrations remain recorded.
+
+For an existing untracked installation, stop application writers, take a verified restorable backup, and rehearse on a restored copy. Audit schema **and data** against the exact release's migrations, establish the contiguous prefix already applied, and reconcile any partial or out-of-order changes. An operator must explicitly baseline `public.schema_migrations` with each verified filename and the SHA-256 checksum of its exact SQL bytes, in a transaction while holding the same advisory lock. Commit the audited records and release the lock before resuming normal migration. Do not fabricate completion records for unapplied work or mark every file applied solely because tables exist.
+
+Migration `021_enable_pgvector.sql` converts JSONB embeddings, drops/renames columns, and builds vector indexes. It is a data/schema transition, not a safe historical replay. Existing data needs dimension/content validation, backup and downtime planning; empty databases still need extension support and sufficient resources to build indexes. Application rollback alone cannot undo this migration. Preserve and test a compatible database restore path before upgrading.
+
+The migration lock does not serialize all application background jobs. Keep the shared plan at one instance initially: backend/agent in-process cron jobs may run once per instance and can also overlap during restarts/deployments. Always On is not durable scheduling. Add distributed job ownership/durable scheduling before scale-out or stronger scheduling guarantees.
+
+## 4. Deploy code
+
+`.github/workflows/deploy-production.yml` runs on pushes to `main`/`master` and manual dispatch; preflight explicitly permits only `refs/heads/main` or `refs/heads/master`. Protect those branches with required reviews/checks. Restrict **Prod** deployment branches to `main`/`master`, require deployment approvals where supported, and run manual deployments only from a reviewed trusted branch/ref. The environment-based OIDC subject does not itself enforce branch trust.
+
+The workflow uses Node.js 22, validates all required configuration before deployment, builds deployable ZIPs, and authenticates with `azure/login@v2` using OIDC. Federation is:
+
+```text
+issuer:   https://token.actions.githubusercontent.com
+audience: api://AzureADTokenExchange
+subject:  repo:emuldrew855/RunCoach:environment:Prod
 ```
 
-### 6.2 Configure Alerts
-
-Set up alerts for:
-- High CPU usage (>80% for 5 minutes)
-- High memory usage (>90%)
-- Failed requests (>10 in 5 minutes)
-- Database connection failures
-
-```bash
-# Example: Alert for high CPU
-az monitor metrics alert create `
-  --name "High CPU Alert" `
-  --resource-group $RESOURCE_GROUP `
-  --scopes "/subscriptions/<subscription-id>/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Web/sites/$BACKEND_APP_NAME" `
-  --condition "avg Percentage CPU > 80" `
-  --window-size 5m `
-  --evaluation-frequency 1m
-```
-
----
-
-## Phase 7: Domain & SSL (Optional, 10 minutes)
-
-### 7.1 Custom Domain for Backend
-
-```bash
-# Add custom domain
-az webapp config hostname add `
-  --resource-group $RESOURCE_GROUP `
-  --webapp-name $BACKEND_APP_NAME `
-  --hostname "api.runcoach.com"
-
-# SSL is automatic with Azure (free managed certificate)
-```
-
-### 7.2 Custom Domain for Frontend
-
-```bash
-# Add custom domain to Static Web App
-az staticwebapp hostname set `
-  --name $STATIC_APP_NAME `
-  --resource-group $RESOURCE_GROUP `
-  --hostname "www.runcoach.com"
-```
-
-Update DNS:
-- CNAME: `www` → `<your-static-app>.azurestaticapps.net`
-- CNAME: `api` → `<your-backend-app>.azurewebsites.net`
-
----
-
-## Phase 8: Cost Optimization
-
-### 8.1 Enable Auto-Shutdown for Development
-
-For dev/test environments, use auto-shutdown:
-
-```bash
-# Scale down App Service during off-hours
-az webapp config appsettings set `
-  --resource-group $RESOURCE_GROUP `
-  --name $BACKEND_APP_NAME `
-  --settings WEBSITE_TIME_ZONE="UTC"
-```
-
-### 8.2 Use Azure Reserved Instances
-
-For production, buy 1-year reserved capacity:
-- App Service: ~30% discount
-- PostgreSQL: ~40% discount
-
-### 8.3 Monitor Costs
-
-```bash
-# Set budget alert
-az consumption budget create `
-  --budget-name "RunCoach Monthly Budget" `
-  --amount 50 `
-  --time-grain Monthly `
-  --time-period "$(date -u +%Y-%m-01)to$(date -u -d '+1 year' +%Y-%m-01)" `
-  --resource-group $RESOURCE_GROUP
-```
-
----
-
-## Phase 9: Scaling Strategy
-
-### 9.1 Auto-Scaling Rules
-
-```bash
-# Enable autoscale for App Service
-az monitor autoscale create `
-  --resource-group $RESOURCE_GROUP `
-  --resource $BACKEND_APP_NAME `
-  --resource-type "Microsoft.Web/sites" `
-  --name "Autoscale Settings" `
-  --min-count 1 `
-  --max-count 3 `
-  --count 1
-
-# Scale out when CPU > 70%
-az monitor autoscale rule create `
-  --resource-group $RESOURCE_GROUP `
-  --autoscale-name "Autoscale Settings" `
-  --condition "Percentage CPU > 70 avg 5m" `
-  --scale out 1
-
-# Scale in when CPU < 30%
-az monitor autoscale rule create `
-  --resource-group $RESOURCE_GROUP `
-  --autoscale-name "Autoscale Settings" `
-  --condition "Percentage CPU < 30 avg 5m" `
-  --scale in 1
-```
-
-### 9.2 Database Scaling
-
-When needed, upgrade PostgreSQL:
-
-```bash
-# Upgrade to higher tier
-az postgres flexible-server update `
-  --resource-group $RESOURCE_GROUP `
-  --name $DB_SERVER_NAME `
-  --sku-name Standard_B2s  # 2 vCores, 4 GB RAM
-```
-
----
-
-## Deployment Checklist
-
-- [ ] Azure account created and CLI installed
-- [ ] Resource group created
-- [ ] PostgreSQL database deployed and migrations run
-- [ ] App Service created and environment variables set
-- [ ] Backend deployed and accessible
-- [ ] Frontend deployed to Static Web Apps
-- [ ] Strava redirect URI updated
-- [ ] Cron job configured (WebJob or Azure Function)
-- [ ] Application Insights enabled
-- [ ] Cost alerts configured
-- [ ] Custom domain configured (optional)
-- [ ] Auto-scaling rules set (optional)
-
----
-
-## Maintenance & Operations
-
-### Daily Monitoring
-
-- Check Application Insights dashboard
-- Review error logs
-- Monitor cost usage
-
-### Weekly Tasks
-
-- Review Monday cron job execution logs
-- Check database performance metrics
-- Review user feedback
-
-### Monthly Tasks
-
-- Review Azure bill and optimize costs
-- Update dependencies (`npm audit`)
-- Review and archive old logs
-- Database backup verification
-
----
-
-## Troubleshooting
-
-### Backend Not Starting
-
-```bash
-# Check logs
-az webapp log tail --resource-group $RESOURCE_GROUP --name $BACKEND_APP_NAME
-
-# Check environment variables
-az webapp config appsettings list --resource-group $RESOURCE_GROUP --name $BACKEND_APP_NAME
-```
-
-### Database Connection Issues
-
-```bash
-# Test connection
-psql "$DB_CONNECTION_STRING" -c "SELECT 1"
-
-# Check firewall rules
-az postgres flexible-server firewall-rule list --resource-group $RESOURCE_GROUP --name $DB_SERVER_NAME
-```
-
-### Frontend Not Loading
-
-```bash
-# Check Static Web App logs
-az staticwebapp show --name $STATIC_APP_NAME --resource-group $RESOURCE_GROUP
-
-# Check environment variables
-az staticwebapp appsettings list --name $STATIC_APP_NAME
-```
-
----
-
-## Alternative: Docker Container Deployment
-
-If you prefer containers, deploy to **Azure Container Apps**:
-
-```bash
-# Create container app environment
-az containerapp env create `
-  --name runcoach-env `
-  --resource-group $RESOURCE_GROUP `
-  --location $LOCATION
-
-# Build and push Docker image
-docker build -t runcoach-backend ./backend
-docker tag runcoach-backend runcoach.azurecr.io/backend:latest
-docker push runcoach.azurecr.io/backend:latest
-
-# Deploy container
-az containerapp create `
-  --name runcoach-api `
-  --resource-group $RESOURCE_GROUP `
-  --environment runcoach-env `
-  --image runcoach.azurecr.io/backend:latest `
-  --target-port 3001 `
-  --ingress external `
-  --env-vars DATABASE_URL="$DB_CONNECTION_STRING" JWT_SECRET="$JWT_SECRET"
-```
-
-**Cost**: Similar to App Service (~$15-20/month)
-
----
-
-## Estimated Performance
-
-| Metric | Expected Value |
-|--------|----------------|
-| API Response Time | <200ms (avg) |
-| Frontend Load Time | <2s (first load) |
-| Database Query Time | <50ms (avg) |
-| Concurrent Users | 100-500 |
-| Uptime | 99.9% |
-
----
-
-## Next Steps
-
-1. **Deploy to Staging First**: Test with `runcoach-staging` resource group
-2. **Load Testing**: Use Apache JMeter or Azure Load Testing
-3. **Security Audit**: Enable Azure Security Center
-4. **Backup Strategy**: Configure automated backups for database
-5. **Disaster Recovery**: Document rollback procedures
-
----
-
-## Support Resources
-
-- **Azure Documentation**: https://docs.microsoft.com/azure
-- **App Service Pricing**: https://azure.microsoft.com/pricing/details/app-service
-- **PostgreSQL Pricing**: https://azure.microsoft.com/pricing/details/postgresql
-- **Azure Support**: https://azure.microsoft.com/support
+Backend deployment and readiness/migrations precede agent/frontend deployment; final checks cover backend and agent `/health`, frontend root, and SPA deep-link fallback. These checks are necessary but do not prove OAuth, AI responses, database durability, or recovery. Production deployments are serialized; deployment approval/configuration must be completed before releasing jobs.
+
+## 5. Live verification checklist
+
+Complete this checklist against the actual provisioned resources; do not report live success from local builds alone.
+
+- [ ] All three Node 22 CI builds and ZIP deployments succeed; Azure runtime/startup commands match the table above.
+- [ ] Backend and agent `GET /health` return 200; startup logs confirm migrations and database/checkpoint setup without exposing secrets.
+- [ ] Frontend root and a direct `/dashboard` refresh serve the SPA; built JS/CSS load successfully with correct HTTPS API URLs.
+- [ ] Strava OAuth login returns to the frontend; authenticated activity sync succeeds and persists activities.
+- [ ] Chat streams a real response through backend and agent; service authentication, OpenAI access, and conversation/checkpoint persistence work.
+- [ ] App restarts retain profiles, plans, conversations, and checkpoints; no essential state relies on ephemeral ZIP/local files.
+- [ ] PostgreSQL extension presence, TLS validation, private DNS resolution, and backend/agent database connectivity are confirmed.
+- [ ] Backup retention and recovery objectives are approved; restore to an isolated server/database is tested, including private-network access and application compatibility.
+- [ ] Alerts/log access and current cost budgets are configured; real-load measurements justify the shared plan/database sizing.
+
+For failures, inspect App Service startup/deployment logs and migration errors first. OIDC errors usually mean mismatched issuer/audience/subject or RBAC propagation; database failures require checking private DNS, VNet integration, TLS, extension permissions, and history. Do not bypass migration safety, weaken TLS, print credentials, or broaden CI privileges to make health checks green.

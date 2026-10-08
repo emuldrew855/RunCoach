@@ -1,6 +1,6 @@
 import { Pool, PoolClient, QueryResult } from 'pg';
-import * as fs from 'fs';
 import * as path from 'path';
+const { runMigrations: runTrackedMigrations } = require('../../scripts/migrationRunner');
 
 // Create connection pool with Azure-compatible settings
 const pool = new Pool({
@@ -45,35 +45,7 @@ export async function getClient(): Promise<PoolClient> {
 // Run migrations
 export async function runMigrations(): Promise<void> {
   const migrationsDir = path.join(__dirname, '../../migrations');
-
-  try {
-    // Check if migrations directory exists
-    if (!fs.existsSync(migrationsDir)) {
-      console.log('No migrations directory found');
-      return;
-    }
-
-    // Get all migration files sorted
-    const files = fs.readdirSync(migrationsDir)
-      .filter(f => f.endsWith('.sql'))
-      .sort();
-
-    console.log(`Found ${files.length} migration files`);
-
-    for (const file of files) {
-      const filePath = path.join(migrationsDir, file);
-      const sql = fs.readFileSync(filePath, 'utf8');
-
-      console.log(`Running migration: ${file}`);
-      await query(sql);
-      console.log(`✓ Migration ${file} completed`);
-    }
-
-    console.log('All migrations completed successfully');
-  } catch (error) {
-    console.error('Migration error:', error);
-    throw error;
-  }
+  await runTrackedMigrations(pool, migrationsDir);
 }
 
 // Close pool

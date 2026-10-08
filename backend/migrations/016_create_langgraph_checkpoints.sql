@@ -2,11 +2,7 @@
 -- These tables are required by @langchain/langgraph-checkpoint-postgres
 -- Creating them via migration ensures they exist before the agent service starts
 
--- Drop existing tables first (in case of schema changes)
-DROP TABLE IF EXISTS checkpoint_writes CASCADE;
-DROP TABLE IF EXISTS checkpoints CASCADE;
-DROP TABLE IF EXISTS checkpoint_blobs CASCADE;
-DROP TABLE IF EXISTS checkpoint_migrations CASCADE;
+-- Preserve existing checkpoint data, extra columns, and saver schema versions.
 
 -- Checkpoints table - stores conversation state snapshots
 CREATE TABLE IF NOT EXISTS checkpoints (
