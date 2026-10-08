@@ -57,11 +57,12 @@ async function runMigrations(pool, migrationsDir) {
     );
 
     if (applied.length === 0) {
-      // Extension-owned objects do not imply an existing application schema.
+      // Migrations target public via the fixed search_path above. Other schemas
+      // may contain managed-host objects; extensions are not application history.
       const { rows } = await client.query(`
         SELECT EXISTS (
           SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-          WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema'
+          WHERE n.nspname = 'public'
             AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
             AND c.oid <> 'public.schema_migrations'::regclass
             AND NOT EXISTS (
@@ -70,14 +71,14 @@ async function runMigrations(pool, migrationsDir) {
             )
           UNION ALL
           SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-          WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema'
+          WHERE n.nspname = 'public'
             AND NOT EXISTS (
               SELECT 1 FROM pg_depend d
               WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'
             )
           UNION ALL
           SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
-          WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema'
+          WHERE n.nspname = 'public'
             AND t.typtype IN ('e', 'd')
             AND NOT EXISTS (
               SELECT 1 FROM pg_depend d
