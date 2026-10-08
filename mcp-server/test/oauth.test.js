@@ -233,6 +233,31 @@ test('OAuth/MCP HTTP and PostgreSQL transaction integration', { skip: !process.e
         await backend.query('COMMIT');
       } finally { release(); await backend.query('ROLLBACK'); backend.release(); }
     });
+    await t.test('concurrent refresh, management revocation, and cleanup use grant-before-token locks', async () => {
+      for (let i = 0; i < 25; i++) {
+        const grantId = random(), refresh = random(), management = random(), expiredAccess = random();
+        await pool.query(`INSERT INTO runcoach_mcp.grants (id,athlete_id,client_id,resource,scope,expires_at)
+          VALUES ($1,7,$2,$3,'runcoach:read',now()+interval '30 days')`, [grantId, config.clientId, config.resource]);
+        await store.insertToken(pool, refresh, grantId, 'refresh', 3600_000);
+        await store.insertToken(pool, management, grantId, 'management', 1800_000);
+        await store.insertToken(pool, expiredAccess, grantId, 'access', -1000);
+        const results = await Promise.allSettled([
+          store.exchange(refresh, 'refresh', config.clientId, () => true, config.resource),
+          store.revoke(management, config.clientId, 'management'),
+          store.cleanup(),
+        ]);
+        assert.equal(results[1].status, 'fulfilled', 'Disconnect must not encounter a deadlock');
+        assert.equal(results[2].status, 'fulfilled', 'Cleanup must not encounter a deadlock');
+        if (results[0].status === 'rejected') assert.equal(results[0].reason.code, 'invalid_grant');
+        else {
+          await assert.rejects(store.authenticate(results[0].value.access_token), /invalid_token/);
+          await assert.rejects(store.exchange(results[0].value.refresh_token, 'refresh', config.clientId, () => true, config.resource), /invalid_grant/);
+        }
+        const row = (await pool.query('SELECT revoked FROM runcoach_mcp.grants WHERE id=$1', [grantId])).rows[0];
+        assert.ok(!row || row.revoked);
+        assert.equal(Number((await pool.query('SELECT count(*) FROM runcoach_mcp.tokens WHERE grant_id=$1', [grantId])).rows[0].count), 0);
+      }
+    });
     await t.test('grants isolate identities and revoke deletes only unused credentials', async () => {
       await pool.query('TRUNCATE runcoach_mcp.tokens,runcoach_mcp.grants,runcoach_mcp.authorization_requests,runcoach_mcp.connections');
       const first = await consent(), firstTokens = await token(first);

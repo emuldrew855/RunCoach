@@ -92,10 +92,13 @@ export class PgStore {
   }
   async exchange(token, kind, clientId, validate, resource) {
     return this.transaction(async db => {
-      const { rows: [t] } = await db.query('SELECT * FROM runcoach_mcp.tokens WHERE hash=$1 AND kind=$2 FOR UPDATE', [hash(token), kind]);
-      if (!active(t)) throw new SafeError('invalid_grant');
-      const { rows: [grant] } = await db.query('SELECT * FROM runcoach_mcp.grants WHERE id=$1 FOR UPDATE', [t.grant_id]);
-      if (!active(grant) || grant.client_id !== clientId || (resource && grant.resource !== resource) || !validate(t.data)) throw new SafeError('invalid_grant');
+      const tokenHash = hash(token);
+      const { rows: [mapping] } = await db.query('SELECT grant_id FROM runcoach_mcp.tokens WHERE hash=$1 AND kind=$2', [tokenHash, kind]);
+      if (!mapping) throw new SafeError('invalid_grant');
+      const { rows: [grant] } = await db.query('SELECT * FROM runcoach_mcp.grants WHERE id=$1 FOR UPDATE', [mapping.grant_id]);
+      if (!active(grant) || grant.client_id !== clientId || (resource && grant.resource !== resource)) throw new SafeError('invalid_grant');
+      const { rows: [t] } = await db.query('SELECT * FROM runcoach_mcp.tokens WHERE hash=$1 AND kind=$2 AND grant_id=$3 FOR UPDATE', [tokenHash, kind, grant.id]);
+      if (!active(t) || !validate(t.data)) throw new SafeError('invalid_grant');
       await db.query('DELETE FROM runcoach_mcp.tokens WHERE hash=$1', [t.hash]);
       const access = random(), refresh = random();
       await this.insertToken(db, access, grant.id, 'access', Math.min(3600_000, new Date(grant.expires_at).getTime() - now()));
@@ -110,7 +113,9 @@ export class PgStore {
   }
   async revoke(token, clientId, kind) {
     return this.transaction(async db => {
-      const { rows: [row] } = await db.query(`SELECT g.* FROM runcoach_mcp.tokens t JOIN runcoach_mcp.grants g ON g.id=t.grant_id WHERE t.hash=$1 AND g.client_id=$2 AND ($3::text IS NULL OR t.kind=$3)`, [hash(token), clientId, kind || null]);
+      const { rows: [mapping] } = await db.query(`SELECT g.id FROM runcoach_mcp.tokens t JOIN runcoach_mcp.grants g ON g.id=t.grant_id WHERE t.hash=$1 AND g.client_id=$2 AND ($3::text IS NULL OR t.kind=$3)`, [hash(token), clientId, kind || null]);
+      if (!mapping) return;
+      const { rows: [row] } = await db.query('SELECT * FROM runcoach_mcp.grants WHERE id=$1 AND client_id=$2 FOR UPDATE', [mapping.id, clientId]);
       if (!row) return;
       await db.query('SELECT athlete_id FROM runcoach_mcp.connections WHERE athlete_id=$1 FOR UPDATE', [row.athlete_id]);
       await db.query('UPDATE runcoach_mcp.grants SET revoked=true WHERE id=$1', [row.id]);
@@ -130,8 +135,16 @@ export class PgStore {
   }
   async cleanup() {
     await this.pool.query('DELETE FROM runcoach_mcp.authorization_requests WHERE expires_at<=now()');
-    await this.pool.query('DELETE FROM runcoach_mcp.tokens WHERE expires_at<=now()');
-    await this.pool.query('DELETE FROM runcoach_mcp.grants WHERE expires_at<=now() OR revoked');
+    await this.transaction(async db => {
+      const { rows } = await db.query('SELECT id FROM runcoach_mcp.grants WHERE expires_at<=now() OR revoked ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1000');
+      if (rows.length) await db.query('DELETE FROM runcoach_mcp.grants WHERE id=ANY($1::text[])', [rows.map(row => row.id)]);
+    });
+    await this.transaction(async db => {
+      const { rows } = await db.query(`SELECT g.id FROM runcoach_mcp.grants g WHERE EXISTS
+        (SELECT 1 FROM runcoach_mcp.tokens t WHERE t.grant_id=g.id AND t.expires_at<=now())
+        ORDER BY g.id FOR UPDATE OF g SKIP LOCKED LIMIT 1000`);
+      if (rows.length) await db.query('DELETE FROM runcoach_mcp.tokens WHERE grant_id=ANY($1::text[]) AND expires_at<=now()', [rows.map(row => row.id)]);
+    });
     await this.pool.query(`DELETE FROM runcoach_mcp.connections c WHERE updated_at<now()-interval '10 minutes' AND NOT EXISTS
       (SELECT 1 FROM runcoach_mcp.grants g WHERE g.athlete_id=c.athlete_id)
       AND NOT EXISTS (SELECT 1 FROM runcoach_mcp.authorization_requests r WHERE r.data->>'athleteId'=c.athlete_id::text)`);

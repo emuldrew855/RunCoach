@@ -73,6 +73,26 @@ test('Strava refresh threshold is five minutes and preserves rotation', async ()
   assert.equal(await api.access(7), 'new'); assert.equal(calls, 1);
   assert.equal(record.refresh_token, 'rotated-refresh');
 });
+test('Strava authorization trusts validated token-response identity and never fetches /athlete', async () => {
+  const requested = [];
+  const credentials = { access_token: 'dummy-access', refresh_token: 'dummy-refresh', expires_at: Math.floor(Date.now() / 1000) + 3600 };
+  const api = new Strava({ stravaClientId: 'dummy', stravaClientSecret: 'dummy' }, {}, async (url, options) => {
+    requested.push(String(url));
+    assert.equal(options.body.get('grant_type'), 'authorization_code');
+    return Response.json({ ...credentials, athlete: { id: 7, firstname: 'Private profile' } });
+  });
+  assert.deepEqual(await api.authorize('dummy-code'), { athleteId: 7, credentials });
+  assert.deepEqual(requested, ['https://www.strava.com/oauth/token']);
+  for (const athlete of [undefined, {}, { id: 0 }, { id: -1 }, { id: '7' }, { id: Number.MAX_SAFE_INTEGER + 1 }]) {
+    let count = 0;
+    api.fetch = async url => {
+      count++; assert.equal(String(url), 'https://www.strava.com/oauth/token');
+      return Response.json({ ...credentials, athlete });
+    };
+    await assert.rejects(api.authorize('dummy-code'), /strava_identity_mismatch/);
+    assert.equal(count, 1);
+  }
+});
 test('configuration enforces HTTPS and exact upstream callback without a separate credential mode/key', () => {
   const env = { DATABASE_URL: 'postgresql://localhost/test', MCP_PUBLIC_URL: 'https://mcp.example.com',
     MCP_CLIENT_ID: 'dummy', MCP_CLIENT_SECRET: 'dummy', MCP_REDIRECT_URIS: 'https://chatgpt.com/callback',

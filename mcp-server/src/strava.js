@@ -26,8 +26,8 @@ export class Strava {
   }
   async authorize(code) {
     const credentials = await this.token({ grant_type: 'authorization_code', code });
-    const athlete = await this.request('https://www.strava.com/api/v3/athlete', { headers: { Authorization: ['Bearer', credentials.access_token].join(' ') } });
-    if (!Number.isSafeInteger(athlete.id) || athlete.id <= 0 || (credentials.athlete && credentials.athlete.id !== athlete.id)) throw new SafeError('strava_identity_mismatch', 502);
+    const athlete = credentials.athlete;
+    if (!Number.isSafeInteger(athlete?.id) || athlete.id <= 0) throw new SafeError('strava_identity_mismatch', 502);
     return { athleteId: athlete.id, credentials: { access_token: credentials.access_token, refresh_token: credentials.refresh_token, expires_at: credentials.expires_at } };
   }
   async access(athleteId, force = false) {
