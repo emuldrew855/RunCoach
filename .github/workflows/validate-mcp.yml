@@ -1,0 +1,104 @@
+name: Validate MCP package
+
+on:
+  pull_request:
+    paths:
+      - 'mcp-server/**'
+      - '.github/workflows/validate-mcp.yml'
+      - '.github/workflows/deploy-mcp.yml'
+  workflow_call:
+    inputs:
+      refresh_lockfile:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mcp_test
+          POSTGRES_PASSWORD: mcp-ci-test-only
+          POSTGRES_DB: mcp_shared_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mcp_test -d mcp_shared_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Refresh dependency lockfile when explicitly requested
+        id: lockfile
+        if: inputs.refresh_lockfile == true
+        working-directory: mcp-server
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install and validate MCP
+        working-directory: mcp-server
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: mcp_test
+          PGPASSWORD: mcp-ci-test-only
+          MCP_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/mcp_shared_test
+          MCP_STORAGE_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/mcp_storage_test
+          MCP_STANDALONE_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/mcp_standalone_test
+          MCP_STARTUP_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/mcp_startup_test
+        run: |
+          set -euo pipefail
+          npm ci
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const pool = new pg.Pool({ connectionString: process.env.MCP_TEST_DATABASE_URL });
+          try {
+            for (const name of ['mcp_storage_test', 'mcp_standalone_test', 'mcp_startup_test']) {
+              await pool.query(`CREATE DATABASE ${name}`);
+            }
+          } finally {
+            await pool.end();
+          }
+          NODE
+          # The packaged startup fixture inherits only its URL, not PG*.
+          export MCP_STARTUP_TEST_DATABASE_URL="$(node --input-type=module -e 'const url = new URL(process.env.MCP_STARTUP_TEST_DATABASE_URL); url.username = process.env.PGUSER; url.password = process.env.PGPASSWORD; process.stdout.write(url.href);')"
+          npm test -- --test-concurrency=1
+          npm run check
+
+      - name: Return refreshed lockfile for review
+        if: always() && steps.lockfile.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-lockfile
+          path: mcp-server/package-lock.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Package code and production dependencies only
+        working-directory: mcp-server
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/schema
+          cp package.json package-lock.json schema.sql deploy/
+          cp -r src deploy/
+          cp schema/tools.json deploy/schema/
+          cd deploy
+          npm ci --omit=dev
+          zip -qr ../mcp-deploy.zip src schema schema.sql package.json package-lock.json node_modules
+
+      - name: Return validated deployment package
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-deploy
+          path: mcp-server/mcp-deploy.zip
+          if-no-files-found: error
+          retention-days: 7

@@ -1,4 +1,4 @@
-import pg from 'pg';
+import { createDatabasePool } from './database.js';
 import { loadConfig } from './config.js';
 import { PgStore } from './store.js';
 import { createApp } from './app.js';
@@ -7,7 +7,7 @@ import { migrate } from './migrate.js';
 let pool;
 try {
   const config = loadConfig();
-  pool = new pg.Pool({ connectionString: config.databaseUrl, max: 10, connectionTimeoutMillis: 5000 });
+  pool = createDatabasePool();
   pool.on('error', () => console.error('MCP database connection unavailable'));
   const options = { storageMode: config.storageMode, credentialEncryptionKey: config.credentialEncryptionKey };
   const store = new PgStore(pool, options);

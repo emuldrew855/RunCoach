@@ -1,4 +1,9 @@
-CREATE SCHEMA IF NOT EXISTS runcoach_mcp;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'runcoach_mcp') THEN
+    CREATE SCHEMA runcoach_mcp;
+  END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS runcoach_mcp.connections (
   athlete_id BIGINT PRIMARY KEY,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

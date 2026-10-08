@@ -66,18 +66,14 @@ test('startup migrates before listening and verifies only the selected credentia
   const script = `
     import { registerHooks } from 'node:module';
     const replacements = {
-      'pg': "export default { Pool: class { on() {} async query(sql) { console.log('QUERY:' + sql); } async end() { console.log('POOL_END'); } } };",
+      'database.js': "export function createDatabasePool() { return { on() {}, async query(sql) { console.log('QUERY:' + sql); }, async end() { console.log('POOL_END'); } }; }",
       'store.js': "export class PgStore { constructor(pool, options) { this.pool = pool; this.options = options; console.log('STORE:' + options.storageMode + ':' + (options.credentialEncryptionKey?.length || 0)); } async initialize() { console.log('INITIALIZE'); if (process.env.FAIL_INITIALIZE) throw new Error('test initialization failure'); await this.pool.query('SELECT * FROM ' + (this.options.storageMode === 'shared' ? 'public.users' : 'runcoach_mcp.credentials')); } }",
       'migrate.js': "export async function migrate(pool, options) { console.log('MIGRATE:' + options.storageMode); if (process.env.FAIL_MIGRATION) throw new Error('test migration failure'); }",
       'app.js': "export function createApp() { return { listen(port, host, ready) { console.log('LISTEN:' + host + ':' + port); ready(); return { on() {}, close() {} }; } }; }",
     };
     registerHooks({
-      resolve(specifier, context, nextResolve) {
-        if (specifier === 'pg') return { url: 'mock:pg', shortCircuit: true };
-        return nextResolve(specifier, context);
-      },
       load(url, context, nextLoad) {
-        const replacement = replacements[url === 'mock:pg' ? 'pg' : url.split('/').pop()];
+        const replacement = replacements[url.split('/').pop()];
         if (replacement) return { format: 'module', source: replacement, shortCircuit: true };
         return nextLoad(url, context);
       },

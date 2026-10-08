@@ -123,7 +123,17 @@ Identity always comes from the authorized MCP connection. Tools never accept a u
 - A publicly reachable HTTPS origin for the MCP service.
 - A ChatGPT account/workspace that supports custom remote MCP apps and OAuth. Workspace administrators may need to enable developer mode.
 
-Platform availability changes. Check the current [OpenAI developer-mode documentation](https://developers.openai.com/api/docs/guides/developer-mode) and [Strava API agreement](https://www.strava.com/legal/api) before deployment. This implementation does not obtain vendor approval.
+Platform availability changes. Check the current [OpenAI custom MCP documentation](https://developers.openai.com/api/docs/guides/custom-mcp-server) and [Strava API agreement](https://www.strava.com/legal/api) before deployment. This implementation does not obtain vendor approval.
+
+On ChatGPT web, open [Plugins](https://chatgpt.com/plugins), select the plus button,
+then **Add custom MCP server**, and use the public `/mcp` URL with **OAuth** and
+the preregistered MCP client ID/secret (not the Strava client credentials).
+Copy the exact production redirect URI from the MCP server's management page
+into `MCP_REDIRECT_URIS`. This server does not advertise RFC 9207 issuer
+identification, so new connections may use
+`https://chatgpt.com/connector/oauth/{callback_id}`. Do not substitute a wildcard,
+invent a callback ID, or assume a legacy stable callback; follow the current
+[OpenAI authentication guide](https://developers.openai.com/plugins/build/auth).
 
 ### 2. Configure the service
 
@@ -230,6 +240,50 @@ The full-stack workflow's automatic deployment requires `main`/`master`, a match
 
 ### Administrator bootstrap
 
+#### Infrastructure-first provisioning (no OAuth configuration)
+
+When the ChatGPT callback or Strava registration is not ready, deploy
+`infra/mcp-bootstrap.bicep` instead. It shares `infra/mcp-resources.bicep` with
+the complete template and creates the same isolated infrastructure, but no
+application settings or application package. The empty web app is **not a
+working MCP endpoint**. Both compute tiers begin billing immediately.
+
+Supply `githubRepository`, `entraAdministratorObjectId`, and
+`entraAdministratorName` (the provisioning user's Entra object ID and exact
+UPN). This path enables Entra-only PostgreSQL authentication and assigns the
+web app a system-assigned managed identity; no database password is created.
+The GitHub deployment identity remains separate from the runtime identity.
+Review an Incremental what-if before applying.
+
+Before deploying application code, connect to PostgreSQL from inside the
+private VNet as the Entra administrator and create a non-admin application role:
+
+```sql
+-- Replace both placeholders with the verified deployment outputs.
+SELECT * FROM pgaadauth_create_principal_with_oid(
+  '<mcpAppServiceName>', '<runtimePrincipalId>', 'service', false, false);
+GRANT CONNECT ON DATABASE runcoach_mcp TO "<mcpAppServiceName>";
+-- Reconnect to runcoach_mcp as the administrator.
+CREATE SCHEMA IF NOT EXISTS runcoach_mcp AUTHORIZATION "<mcpAppServiceName>";
+```
+
+The role owns only the MCP schema, allowing the existing startup migrations.
+Do not grant it server administrator, CREATEDB, or CREATEROLE privileges.
+Creating the Azure identity alone does not create its PostgreSQL role.
+Do not open public database access to perform this step.
+
+Finish configuration with `infra/mcp.bicep`, retaining the same resource names
+and provisioned PostgreSQL SKU, and setting `databaseAuthMode=entra` and the same Entra administrator values.
+Omit `postgresPassword` for this mode. Supply the real OAuth configuration and
+a securely backed-up persistent encryption key. This sets
+`DATABASE_AUTH_MODE=managed-identity` and a passwordless `DATABASE_URL` with
+`sslmode=verify-full`. Runtime and CLI migrations acquire a fresh Entra token
+for each new database connection using the app's system-assigned identity.
+The legacy password mode remains available for existing environments; a
+password is required by PostgreSQL when using that mode. Use Entra mode for
+new production deployments. Never switch an Entra server back to password
+mode by accidentally applying the legacy defaults.
+
 An authorized administrator with infrastructure provisioning and role-assignment permissions (Owner/RBAC administrator as appropriate) provisions infrastructure first. Keep secure ARM parameters (database password, Strava/client secrets, encryption key, and any secret-bearing connection string) in a protected parameter file **outside the repository**, supplied through a secret manager or protected deployment runner. Never inline them in commands, commit them, or print them in logs. Reuse the encryption key for every deployment.
 
 Supply these template parameters:
@@ -239,7 +293,10 @@ Supply these template parameters:
 | `location` | `swedencentral` (default) |
 | `mcpAppName`, `mcpPlanName`, `mcpVnetName`, `postgresServerName` | Dedicated names; defaults are MCP-specific. Verify no collision with existing resources |
 | `postgresAdministrator` | Dedicated database login; default `mcpadmin` |
-| `postgresPassword` | Secure, new database password, at least 16 characters |
+| `databaseAuthMode` | Set `entra` for new production deployments; default `password` is legacy compatibility |
+| `entraAdministratorObjectId`, `entraAdministratorName` | Same verified administrator object ID and exact UPN used for infrastructure-first provisioning |
+| `postgresSkuName` | `Standard_B1ms` by default; `Standard_B2s` is a higher-cost capacity fallback. Retain the provisioned SKU in subsequent deployments |
+| `postgresPassword` | Omit in Entra mode; legacy password mode requires a secure new password, at least 16 characters |
 | `stravaClientId`, `stravaClientSecret` | Separate approved registration, or completed registration cutover; secret is secure |
 | `mcpClientId`, `mcpClientSecret` | Preregistered confidential ChatGPT client; secure secret is at least 32 characters |
 | `mcpCredentialEncryptionKey` | Secure, persistent canonical base64 32-byte encryption key (44 characters) |
@@ -253,7 +310,10 @@ Have the administrator create the protected external parameter file using this c
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "postgresPassword": { "value": "<new-database-password-at-least-16-characters>" },
+    "databaseAuthMode": { "value": "entra" },
+    "entraAdministratorObjectId": { "value": "<verified-administrator-object-id>" },
+    "entraAdministratorName": { "value": "<exact-administrator-UPN>" },
+    "postgresSkuName": { "value": "<same-SKU-as-infrastructure-bootstrap>" },
     "stravaClientId": { "value": "<dedicated-strava-client-id>" },
     "stravaClientSecret": { "value": "<strava-client-secret>" },
     "mcpClientId": { "value": "<preregistered-chatgpt-client-id>" },
@@ -316,7 +376,35 @@ The separate workflow must deploy only the `mcp-server` artifact and preserve pr
 
 ### Cost and capacity
 
-The dedicated **App Service B1 plan and PostgreSQL B1ms server incur ongoing charges while provisioned**, plus storage/networking costs. “On-demand” means retrieving Strava data when tools are called, **not scale-to-zero hosting**. Azure SKU availability, subscription quota, and actual regional costs have not been verified live; the administrator must check these before bootstrap.
+The dedicated **App Service B1 plan and PostgreSQL server incur ongoing charges
+while provisioned**, plus storage/networking costs. PostgreSQL defaults to B1ms;
+B2s is a higher-cost capacity fallback. A regional capacity failure can occur
+even when Azure advertises a SKU. Retain the SKU that actually provisioned in
+every subsequent deployment. "On-demand" means retrieving Strava data when tools
+are called, **not scale-to-zero hosting**. Check current regional pricing and
+subscription capacity before bootstrap.
+
+### Build preparation without production access
+
+The reusable `.github/workflows/validate-mcp.yml` installs dependencies on a
+GitHub runner, runs all four disposable PostgreSQL test fixtures, and produces
+an MCP-only ZIP. Pull requests run validation without Azure credentials,
+OIDC write permission, or the `ProdMcp` environment. Production deploys consume
+that validated artifact instead of rebuilding it.
+
+If local dependency installation is unavailable, push the feature branch and
+dispatch the existing deployment workflow in prepare-only mode:
+
+```bash
+gh workflow run deploy-mcp.yml --ref <feature-branch> \
+  -f prepareOnly=true -f refreshLockfile=true
+```
+
+Prepare-only runs do not access Azure or deploy, even when dispatched on
+`main`/`master`. An explicitly requested lockfile refresh returns a
+`mcp-lockfile` artifact for review; download and commit it before merging.
+The `mcp-deploy` artifact is emitted only after validation and packaging succeed.
+Normal PR and production runs use `npm ci` without refreshing the lockfile.
 
 ## HTTP endpoints
 
