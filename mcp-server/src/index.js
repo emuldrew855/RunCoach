@@ -9,7 +9,8 @@ try {
   const config = loadConfig();
   pool = createDatabasePool();
   pool.on('error', () => console.error('MCP database connection unavailable'));
-  const options = { storageMode: config.storageMode, credentialEncryptionKey: config.credentialEncryptionKey };
+  const options = { storageMode: config.storageMode, credentialEncryptionKey: config.credentialEncryptionKey,
+    useSharedLockFunction: config.useSharedLockFunction };
   const store = new PgStore(pool, options);
   await migrate(pool, options);
   await store.initialize();

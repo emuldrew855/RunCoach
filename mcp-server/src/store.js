@@ -13,10 +13,11 @@ const now = () => Date.now();
 const active = row => row && !row.revoked && new Date(row.expires_at).getTime() > now();
 
 export class PgStore {
-  constructor(pool, { storageMode = 'shared', credentialEncryptionKey } = {}) {
+  constructor(pool, { storageMode = 'shared', credentialEncryptionKey, useSharedLockFunction = false } = {}) {
     this.pool = pool;
     if (!['shared', 'standalone'].includes(storageMode)) throw new Error('Invalid credential storage mode');
     this.storageMode = storageMode;
+    this.useSharedLockFunction = useSharedLockFunction;
     if (storageMode === 'standalone') {
       const key = Buffer.isBuffer(credentialEncryptionKey) ? Buffer.from(credentialEncryptionKey)
         : typeof credentialEncryptionKey === 'string' ? Buffer.from(credentialEncryptionKey, 'base64') : Buffer.alloc(0);
@@ -50,6 +51,11 @@ export class PgStore {
     await db.query('SELECT 1 FROM runcoach_mcp.grants LIMIT 0');
     if (this.storageMode === 'shared') {
       await db.query('SELECT strava_id,access_token,refresh_token,token_expires_at FROM public.users LIMIT 0');
+      if (this.useSharedLockFunction) {
+        const { rows: [permission] } = await db.query(
+          "SELECT has_function_privilege(current_user, 'public.runcoach_mcp_lock_credentials()', 'EXECUTE') AS allowed");
+        if (!permission?.allowed) throw new Error('Shared credential lock unavailable');
+      }
     } else {
       const { rows } = await db.query('SELECT athlete_id,encrypted_credentials FROM runcoach_mcp.credentials');
       for (const row of rows) this.decryptCredentials(row.athlete_id, row.encrypted_credentials);
@@ -94,6 +100,13 @@ export class PgStore {
       });
     });
   }
+  async denyAuthorization(id, browserHash) {
+    return this.request(id, browserHash, async (db, row) => {
+      if (row.strava_used) throw new SafeError('invalid_state');
+      await db.query('DELETE FROM runcoach_mcp.authorization_requests WHERE id=$1', [row.id]);
+      return row.data;
+    });
+  }
   async authorizeCredentials(exchange) {
     return this.transaction(async db => {
       if (this.storageMode === 'standalone') {
@@ -107,7 +120,9 @@ export class PgStore {
       }
       await db.query("SET LOCAL lock_timeout = '5s'");
       // Identity is unknown until exchange; block row-locked refreshes before it can rotate credentials.
-      await db.query('LOCK TABLE public.users IN EXCLUSIVE MODE');
+      await db.query(this.useSharedLockFunction
+        ? 'SELECT public.runcoach_mcp_lock_credentials()'
+        : 'LOCK TABLE public.users IN EXCLUSIVE MODE');
       const identity = await exchange();
       const credentials = identity.credentials;
       await db.query(`INSERT INTO public.users (strava_id,access_token,refresh_token,token_expires_at)

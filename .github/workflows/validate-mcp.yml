@@ -11,6 +11,8 @@ on:
       - 'backend/src/models/User.ts'
       - 'backend/src/routes/auth.ts'
       - 'backend/test/shared-strava.test.cjs'
+      - 'infra/mcp-shared-*.sql'
+      - 'infra/mcp-shared-runtime.bicep'
   workflow_call:
     inputs:
       refresh_lockfile:

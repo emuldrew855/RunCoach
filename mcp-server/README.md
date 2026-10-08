@@ -129,10 +129,12 @@ On ChatGPT web, open [Plugins](https://chatgpt.com/plugins), select the plus but
 then **Add custom MCP server**, and use the public `/mcp` URL with **OAuth** and
 the preregistered MCP client ID/secret (not the Strava client credentials).
 Copy the exact production redirect URI from the MCP server's management page
-into `MCP_REDIRECT_URIS`. This server does not advertise RFC 9207 issuer
-identification, so new connections may use
-`https://chatgpt.com/connector/oauth/{callback_id}`. Do not substitute a wildcard,
-invent a callback ID, or assume a legacy stable callback; follow the current
+into `MCP_REDIRECT_URIS`. This server advertises RFC 9207 issuer
+identification and includes its exact issuer in successful and denied
+authorization responses. ChatGPT supports the stable
+`https://chatgpt.com/connector_platform_oauth_redirect` callback for such servers;
+otherwise use the exact callback-specific URI shown by its management page.
+Do not substitute a wildcard or invent a callback ID; follow the current
 [OpenAI authentication guide](https://developers.openai.com/plugins/build/auth).
 
 ### 2. Configure the service
@@ -274,6 +276,42 @@ The role owns only the MCP schema, allowing the existing startup migrations.
 Do not grant it server administrator, CREATEDB, or CREATEROLE privileges.
 Creating the Azure identity alone does not create its PostgreSQL role.
 Do not open public database access to perform this step.
+
+#### Reusing an existing Strava registration and database
+
+Use `infra/mcp-shared-runtime.bicep` to configure the **existing dedicated MCP
+web app only**. It does not redeploy PostgreSQL, change its authentication
+settings, or modify the backend. Supply a current in-memory snapshot of MCP
+app settings as `existingAppSettings`; this secure parameter preserves unrelated
+settings. Supply the existing backend origin and shared PostgreSQL host/database.
+Never pass secrets as command-line arguments or write parameter files containing them.
+Preserve password authentication on the existing backend database while enabling
+Entra authentication for MCP; do not migrate the backend's identity implicitly.
+
+As the PostgreSQL Entra administrator, run `infra/mcp-shared-access.sql` with
+psql variables `runtime_role` (MCP app name), `runtime_object_id` (system-assigned
+principal ID), and `database_name` (existing RunCoach database). Connect with
+an in-memory Entra token and verified TLS. The script verifies the principal
+mapping and refuses to take over an existing MCP schema with another owner.
+The runtime owns only `runcoach_mcp`, has sequence usage, and can read identity
+and token columns, insert token connections, and update token/expiry fields.
+It cannot read email/profile columns or modify them.
+
+Column-level UPDATE permissions cannot acquire PostgreSQL's EXCLUSIVE table
+lock. The administrator-owned `public.runcoach_mcp_lock_credentials()` function
+provides only that fixed lock, with a fixed `pg_catalog` search path and no PUBLIC
+execution grant. Shared managed-identity startup verifies execution permission
+and uses it inside the existing five-second-timeout transaction, preserving
+coordination with backend row/table locks without granting table-wide UPDATE.
+The SQL script must remain administrator-run; runtime migrations do not create
+or own this privileged function.
+
+For `ProdMcp`, set `STRAVA_CREDENTIAL_STORE=shared`, `MCP_POSTGRES_HOST`,
+`MCP_POSTGRES_DATABASE`, and `STRAVA_CALLBACK_RELAY_ORIGIN` as environment
+variables. Deployment verifies these against persistent Azure settings,
+requires managed-identity database authentication in shared mode, and does
+not require a standalone encryption key. Deploy the validated narrow backend
+package and configure its relay **before** accepting MCP OAuth connections.
 
 Finish configuration with `infra/mcp.bicep`, retaining the same resource names
 and provisioned PostgreSQL SKU, and setting `databaseAuthMode=entra` and the same Entra administrator values.

@@ -8,6 +8,8 @@ on:
       - 'infra/mcp.bicep'
       - 'infra/mcp-resources.bicep'
       - 'infra/mcp-bootstrap.bicep'
+      - 'infra/mcp-shared-*.sql'
+      - 'infra/mcp-shared-runtime.bicep'
       - '.github/workflows/deploy-mcp.yml'
       - '.github/workflows/validate-mcp.yml'
   workflow_dispatch:
@@ -56,6 +58,9 @@ jobs:
       STRAVA_CLIENT_ID: ${{ vars.STRAVA_CLIENT_ID }}
       MCP_CLIENT_ID: ${{ vars.MCP_CLIENT_ID }}
       MCP_POSTGRES_HOST: ${{ vars.MCP_POSTGRES_HOST }}
+      MCP_POSTGRES_DATABASE: ${{ vars.MCP_POSTGRES_DATABASE || 'runcoach_mcp' }}
+      STRAVA_CREDENTIAL_STORE: ${{ vars.STRAVA_CREDENTIAL_STORE || 'standalone' }}
+      STRAVA_CALLBACK_RELAY_ORIGIN: ${{ vars.STRAVA_CALLBACK_RELAY_ORIGIN }}
     steps:
       - name: Validate protected environment configuration
         shell: bash
@@ -86,8 +91,26 @@ jobs:
             process.exit(1);
           }
           if (!/^[a-z0-9-]+\.postgres\.database\.azure\.com$/.test(process.env.MCP_POSTGRES_HOST)) {
-            console.error('::error::Invalid dedicated MCP PostgreSQL host');
+            console.error('::error::Invalid MCP PostgreSQL host');
             process.exit(1);
+          }
+          if (!['standalone', 'shared'].includes(process.env.STRAVA_CREDENTIAL_STORE) ||
+              !/^[a-z][a-z0-9_]*$/.test(process.env.MCP_POSTGRES_DATABASE)) {
+            console.error('::error::Invalid credential store or database name');
+            process.exit(1);
+          }
+          const relay = process.env.STRAVA_CALLBACK_RELAY_ORIGIN;
+          if (relay) {
+            let valid = false;
+            try {
+              const url = new URL(relay);
+              valid = process.env.STRAVA_CREDENTIAL_STORE === 'shared' &&
+                url.protocol === 'https:' && url.origin === relay;
+            } catch {}
+            if (!valid) {
+              console.error('::error::Invalid shared Strava callback relay');
+              process.exit(1);
+            }
           }
           NODE
 
@@ -134,16 +157,24 @@ jobs:
             MCP_PUBLIC_URL: process.env.MCP_PUBLIC_URL,
             MCP_CLIENT_ID: process.env.MCP_CLIENT_ID,
             STRAVA_CLIENT_ID: process.env.STRAVA_CLIENT_ID,
-            STRAVA_CREDENTIAL_STORE: 'standalone',
+            STRAVA_CREDENTIAL_STORE: process.env.STRAVA_CREDENTIAL_STORE,
             TRUSTED_PROXY_MODE: 'azure-app-service',
             HOST: '0.0.0.0',
             NODE_ENV: 'production',
-            STRAVA_REDIRECT_URI: `${process.env.MCP_PUBLIC_URL}/strava/callback`,
+            STRAVA_REDIRECT_URI: process.env.STRAVA_CALLBACK_RELAY_ORIGIN
+              ? `${process.env.STRAVA_CALLBACK_RELAY_ORIGIN}/api/v1/auth/strava/mcp/callback`
+              : `${process.env.MCP_PUBLIC_URL}/strava/callback`,
           };
+          if (process.env.STRAVA_CALLBACK_RELAY_ORIGIN) {
+            expected.STRAVA_CALLBACK_RELAY_ORIGIN = process.env.STRAVA_CALLBACK_RELAY_ORIGIN;
+          } else if (settings.STRAVA_CALLBACK_RELAY_ORIGIN) {
+            console.error('::error::Unexpected callback relay setting');
+            process.exit(1);
+          }
           if (!target.httpsOnly || `https://${target.host}` !== process.env.MCP_PUBLIC_URL ||
               Object.entries(expected).some(([key, value]) => settings[key] !== value) ||
               !['DATABASE_URL', 'MCP_CLIENT_SECRET', 'STRAVA_CLIENT_SECRET', 'MCP_REDIRECT_URIS'].every(key => settings[key])) {
-            console.error('::error::Target does not match the bootstrapped standalone MCP runtime');
+            console.error('::error::Target does not match the configured MCP runtime');
             process.exit(1);
           }
           const key = settings.MCP_CREDENTIAL_ENCRYPTION_KEY || '';
@@ -151,16 +182,20 @@ jobs:
           let verifiedTls = false;
           try {
             const database = new URL(settings.DATABASE_URL);
-            verifiedTls = database.protocol === 'postgresql:' && database.pathname === '/runcoach_mcp' &&
+            verifiedTls = database.protocol === 'postgresql:' &&
+              database.pathname === `/${process.env.MCP_POSTGRES_DATABASE}` &&
               database.hostname === process.env.MCP_POSTGRES_HOST &&
               database.searchParams.getAll('sslmode').length === 1 &&
               database.searchParams.get('sslmode') === 'verify-full';
             const mode = settings.DATABASE_AUTH_MODE || 'password';
-            verifiedTls &&= mode === 'password' || (mode === 'managed-identity' &&
-              !!database.username && !database.password &&
+            verifiedTls &&= (mode === 'password' && process.env.STRAVA_CREDENTIAL_STORE === 'standalone') ||
+              (mode === 'managed-identity' &&
+              decodeURIComponent(database.username) === process.env.AZURE_MCP_APP_NAME && !database.password &&
               [...database.searchParams.keys()].every(key => key === 'sslmode'));
           } catch {}
-          if (decoded.length !== 32 || decoded.toString('base64') !== key || !verifiedTls) {
+          const encryptionValid = process.env.STRAVA_CREDENTIAL_STORE !== 'standalone' ||
+            (decoded.length === 32 && decoded.toString('base64') === key);
+          if (!encryptionValid || !verifiedTls) {
             console.error('::error::Invalid persistent credential encryption or database TLS configuration');
             process.exit(1);
           }
@@ -197,6 +232,7 @@ jobs:
           const auth = await discovery('/.well-known/oauth-authorization-server');
           const resource = await discovery('/.well-known/oauth-protected-resource/mcp');
           if (auth.issuer !== base || auth.authorization_endpoint !== `${base}/oauth/authorize` ||
+              auth.authorization_response_iss_parameter_supported !== true ||
               auth.token_endpoint !== `${base}/oauth/token` ||
               !auth.code_challenge_methods_supported?.includes('S256') ||
               resource.resource !== `${base}/mcp` || !resource.authorization_servers?.includes(base)) {

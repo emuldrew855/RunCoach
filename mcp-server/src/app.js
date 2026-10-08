@@ -70,12 +70,13 @@ export function createApp({ config, store, fetchImpl = fetch, strava = new Strav
   };
   const redirect = (data, params) => {
     const url = new URL(data.redirectUri);
-    for (const [key, value] of Object.entries({ ...params, state: data.state })) url.searchParams.set(key, value);
+    for (const [key, value] of Object.entries({ ...params, state: data.state, iss: config.publicUrl })) url.searchParams.set(key, value);
     return url.href;
   };
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
   app.get('/.well-known/oauth-authorization-server', (_req, res) => res.json({
-    issuer: config.publicUrl, authorization_endpoint: `${config.publicUrl}/oauth/authorize`,
+    issuer: config.publicUrl, authorization_response_iss_parameter_supported: true,
+    authorization_endpoint: `${config.publicUrl}/oauth/authorize`,
     token_endpoint: `${config.publicUrl}/oauth/token`, revocation_endpoint: `${config.publicUrl}/oauth/revoke`,
     response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'],
     token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
@@ -103,6 +104,12 @@ export function createApp({ config, store, fetchImpl = fetch, strava = new Strav
   app.get('/strava/callback', async (req, res) => {
     const state = query(req, 'state'), browser = cookie(req, 'mcp_browser');
     if (!state || !browser) throw new SafeError('invalid_state');
+    if (query(req, 'error')) {
+      const data = await store.denyAuthorization(state, hash(browser));
+      res.clearCookie('mcp_browser', { path: '/' });
+      res.redirect(redirect(data, { error: 'access_denied' }));
+      return;
+    }
     const data = await store.stravaCallback(state, hash(browser), async () => {
       const scopes = query(req, 'scope').split(',');
       if (query(req, 'error') || !query(req, 'code') || !STRAVA_SCOPES.every(scope => scopes.includes(scope))) throw new SafeError('strava_consent_required');

@@ -20,6 +20,10 @@ test('configuration preserves shared storage and local listener defaults', () =>
   assert.equal(config.port, 3002);
   assert.equal(config.trustedProxy, 'loopback');
   assert.equal(config.production, true);
+  assert.equal(config.useSharedLockFunction, false);
+  assert.equal(loadConfig({ ...env, DATABASE_AUTH_MODE: 'managed-identity' }).useSharedLockFunction, true);
+  assert.equal(loadConfig({ ...env, DATABASE_AUTH_MODE: 'managed-identity', STRAVA_CREDENTIAL_STORE: 'standalone',
+    MCP_CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32).toString('base64') }).useSharedLockFunction, false);
 });
 
 test('standalone requires a canonical 32-byte base64 encryption key', () => {

@@ -62,6 +62,7 @@ export function loadConfig(env = process.env) {
   return {
     publicUrl: base, resource: `${base}/mcp`, production, port, host: env.HOST || '127.0.0.1',
     storageMode, credentialEncryptionKey, trustedProxyMode, trustedProxy,
+    useSharedLockFunction: storageMode === 'shared' && env.DATABASE_AUTH_MODE === 'managed-identity',
     databaseUrl: required('DATABASE_URL'), clientId: required('MCP_CLIENT_ID'),
     clientSecret: required('MCP_CLIENT_SECRET'), redirects, origins: [base, ...origins],
     stravaClientId: required('STRAVA_CLIENT_ID'), stravaClientSecret: required('STRAVA_CLIENT_SECRET'),
