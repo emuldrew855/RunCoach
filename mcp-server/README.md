@@ -155,7 +155,8 @@ Configure the environment using `.env.example`:
 | `MCP_CREDENTIAL_ENCRYPTION_KEY` | Required in standalone: canonical base64 encoding of exactly 32 random bytes |
 | `MCP_PUBLIC_URL` | Fixed external service origin, e.g. `https://mcp.example.com`; not derived from request headers |
 | `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET` | Approved Strava registration for the selected mode; standalone must use a separate registration or explicit cutover |
-| `STRAVA_REDIRECT_URI` | This service's callback: `https://mcp.example.com/strava/callback` |
+| `STRAVA_REDIRECT_URI` | Direct `/strava/callback`, or the fixed backend relay route described below |
+| `STRAVA_CALLBACK_RELAY_ORIGIN` | Optional shared-mode-only, exact HTTPS backend origin; no path, credentials, query or fragment |
 | `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET` | Separate, preregistered ChatGPT OAuth client credentials; not Strava credentials |
 | `MCP_REDIRECT_URIS` | Exact, comma-separated OAuth callbacks supplied by the ChatGPT client; no wildcards |
 | `HOST`, `PORT` | Bind address and listener port; Azure binds `0.0.0.0` |
@@ -177,7 +178,9 @@ Generate the standalone encryption key in a protected provisioning environment w
 
 This service uses `/strava/callback`, not RunCoach's `/api/v1/auth/callback`. Configure the standalone registration for the MCP hostname. In shared mode, keep the existing RunCoach callback unchanged.
 
-Strava enforces its configured **Authorization Callback Domain**. For shared mode, if the existing registration does not permit the new service hostname, host this service behind the same approved hostname or resolve callback-domain configuration with Strava before deployment. Do not change the domain in a way that breaks the existing application's login.
+Strava enforces its configured **Authorization Callback Domain**. For shared mode, the backend can relay the MCP browser callback without changing that domain or its normal login callback. Configure backend `MCP_CALLBACK_ORIGIN` to the exact MCP HTTPS origin, MCP `STRAVA_CALLBACK_RELAY_ORIGIN` to the exact backend HTTPS origin, and MCP `STRAVA_REDIRECT_URI` to `${STRAVA_CALLBACK_RELAY_ORIGIN}/api/v1/auth/strava/mcp/callback`. The relay forwards only bounded OAuth fields to the fixed MCP `/strava/callback`; it does not exchange or store tokens. The MCP server still verifies its browser cookie and one-use state. Deploy the backend's coordinated authorization/refresh transactions before enabling shared MCP OAuth.
+
+`validate-mcp.yml` compiles and tests the backend changes and produces a four-module `backend-shared-strava` artifact. This is a narrow compatibility update, not a full backend release: retain the deployed database/startup modules, dependencies, migrations, and existing settings. The backend redacts the relay query from its Morgan application access logs; platform or external proxy logging must likewise avoid capturing OAuth credentials.
 
 Only use HTTP with loopback hosts during local development. Remote ChatGPT needs a reachable HTTPS deployment, not an inaccessible localhost URL.
 

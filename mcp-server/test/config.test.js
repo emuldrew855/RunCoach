@@ -33,6 +33,21 @@ test('standalone requires a canonical 32-byte base64 encryption key', () => {
   assert.throws(() => loadConfig({ ...env, STRAVA_CREDENTIAL_STORE: 'other' }));
 });
 
+test('shared callback relay requires an exact configured HTTPS origin and fixed route', () => {
+  const relay = 'https://runcoach.example.com';
+  const settings = { ...env, STRAVA_CALLBACK_RELAY_ORIGIN: relay,
+    STRAVA_REDIRECT_URI: `${relay}/api/v1/auth/strava/mcp/callback` };
+  assert.equal(loadConfig(settings).stravaRedirect, settings.STRAVA_REDIRECT_URI);
+  for (const invalid of ['http://runcoach.example.com', relay + '/', relay + '/path',
+    relay + '?x=1', 'https://user@runcoach.example.com']) {
+    assert.throws(() => loadConfig({ ...settings, STRAVA_CALLBACK_RELAY_ORIGIN: invalid }));
+  }
+  assert.throws(() => loadConfig({ ...settings, STRAVA_REDIRECT_URI: relay + '/api/v1/auth/strava/callback' }));
+  assert.throws(() => loadConfig({ ...settings, STRAVA_CALLBACK_RELAY_ORIGIN: undefined }));
+  assert.throws(() => loadConfig({ ...settings, STRAVA_CREDENTIAL_STORE: 'standalone',
+    MCP_CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32).toString('base64') }));
+});
+
 test('Azure managed ingress requires explicit bounded proxy mode', () => {
   const config = loadConfig({ ...env, HOST: '0.0.0.0', PORT: '8080', TRUSTED_PROXY_MODE: 'azure-app-service' });
   assert.equal(config.host, '0.0.0.0');

@@ -6,6 +6,11 @@ on:
       - 'mcp-server/**'
       - '.github/workflows/validate-mcp.yml'
       - '.github/workflows/deploy-mcp.yml'
+      - 'backend/src/controllers/authController.ts'
+      - 'backend/src/services/stravaService.ts'
+      - 'backend/src/models/User.ts'
+      - 'backend/src/routes/auth.ts'
+      - 'backend/test/shared-strava.test.cjs'
   workflow_call:
     inputs:
       refresh_lockfile:
@@ -16,6 +21,33 @@ permissions:
   contents: read
 
 jobs:
+  validate-shared-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compile backend and validate shared token coordination
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          node --test test/shared-strava.test.cjs
+      - name: Package only coordinated token and callback modules
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          zip -q backend-shared-strava.zip dist/controllers/authController.js \
+            dist/services/stravaService.js dist/models/User.js dist/routes/auth.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-shared-strava
+          path: backend/backend-shared-strava.zip
+          if-no-files-found: error
+          retention-days: 7
+
   validate:
     runs-on: ubuntu-latest
     services:
