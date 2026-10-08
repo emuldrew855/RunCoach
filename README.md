@@ -199,6 +199,10 @@ Migrations are run automatically when the backend starts.
 
 ## Development
 
+### Azure Production Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for Azure resource provisioning, safe database initialization, and live verification, and [GITHUB_SECRETS.md](GITHUB_SECRETS.md) for the `Prod` environment's OIDC configuration. GitHub Actions redeploys all three App Services on reviewed pushes to `main`/`master`; infrastructure must be provisioned first.
+
 ### Backend Development
 ```bash
 cd backend
