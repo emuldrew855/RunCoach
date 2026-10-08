@@ -3,7 +3,23 @@ CREATE TABLE IF NOT EXISTS runcoach_mcp.connections (
   athlete_id BIGINT PRIMARY KEY,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-ALTER TABLE runcoach_mcp.connections DROP COLUMN IF EXISTS credentials;
+-- Preserve historical values without requiring new connections to store plaintext credentials.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='runcoach_mcp' AND table_name='connections' AND column_name='credentials'
+  ) THEN
+    ALTER TABLE runcoach_mcp.connections ALTER COLUMN credentials DROP NOT NULL;
+  END IF;
+END $$;
+-- Independent Strava registration credentials; never import or mutate public.users.
+-- Envelope: version (1 byte), nonce (12 bytes), GCM authentication tag (16 bytes), ciphertext.
+CREATE TABLE IF NOT EXISTS runcoach_mcp.credentials (
+  athlete_id BIGINT PRIMARY KEY,
+  encrypted_credentials BYTEA NOT NULL CHECK (octet_length(encrypted_credentials) >= 30),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS runcoach_mcp.authorization_requests (
   id TEXT PRIMARY KEY,
   browser_hash TEXT NOT NULL,

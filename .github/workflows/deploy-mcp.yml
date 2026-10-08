@@ -1,0 +1,192 @@
+name: Deploy isolated MCP to Azure
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'mcp-server/**'
+      - 'infra/mcp.bicep'
+      - '.github/workflows/deploy-mcp.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: azure-mcp-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-mcp:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: ProdMcp
+    env:
+      AZURE_MCP_CLIENT_ID: ${{ secrets.AZURE_MCP_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_MCP_APP_NAME: ${{ secrets.AZURE_MCP_APP_NAME }}
+      MCP_PUBLIC_URL: ${{ secrets.MCP_PUBLIC_URL }}
+      STRAVA_CLIENT_ID: ${{ vars.STRAVA_CLIENT_ID }}
+      MCP_CLIENT_ID: ${{ vars.MCP_CLIENT_ID }}
+    steps:
+      - name: Validate protected environment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const names = ['AZURE_MCP_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID',
+            'AZURE_MCP_APP_NAME', 'MCP_PUBLIC_URL', 'STRAVA_CLIENT_ID', 'MCP_CLIENT_ID'];
+          for (const name of names) {
+            if (!process.env[name]?.trim()) {
+              console.error(`::error::Missing ProdMcp configuration: ${name}`);
+              process.exit(1);
+            }
+          }
+          for (const name of ['AZURE_MCP_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID']) {
+            if (!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(process.env[name])) {
+              console.error(`::error::Invalid Azure ID: ${name}`);
+              process.exit(1);
+            }
+          }
+          let validOrigin = false;
+          try {
+            const url = new URL(process.env.MCP_PUBLIC_URL);
+            validOrigin = url.protocol === 'https:' && url.origin === process.env.MCP_PUBLIC_URL;
+          } catch {}
+          if (!/^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$/i.test(process.env.AZURE_MCP_APP_NAME) || !validOrigin) {
+            console.error('::error::Invalid MCP app name or HTTPS origin');
+            process.exit(1);
+          }
+          NODE
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install and validate MCP
+        working-directory: mcp-server
+        run: |
+          npm ci
+          npm test
+          npm run check
+
+      - name: Package code and production dependencies only
+        working-directory: mcp-server
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/schema
+          cp package.json package-lock.json schema.sql deploy/
+          cp -r src deploy/
+          cp schema/tools.json deploy/schema/
+          cd deploy
+          npm ci --omit=dev
+          # The explicit allowlist excludes .env, tests, and full-stack code.
+          zip -qr ../mcp-deploy.zip src schema schema.sql package.json package-lock.json node_modules
+
+      - name: Azure OIDC login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_MCP_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify dedicated target and persisted runtime settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          trap 'rm -f mcp-target.json mcp-settings.json' EXIT
+          az webapp show --resource-group runcoach-prod-rg --name "$AZURE_MCP_APP_NAME" \
+            --query '{host:defaultHostName,httpsOnly:httpsOnly}' --output json > mcp-target.json
+          # Never print app settings: they include credentials.
+          az webapp config appsettings list --resource-group runcoach-prod-rg \
+            --name "$AZURE_MCP_APP_NAME" --output json > mcp-settings.json
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const target = JSON.parse(readFileSync('mcp-target.json', 'utf8'));
+          const settings = Object.fromEntries(JSON.parse(readFileSync('mcp-settings.json', 'utf8')).map(x => [x.name, x.value]));
+          const expected = {
+            MCP_PUBLIC_URL: process.env.MCP_PUBLIC_URL,
+            MCP_CLIENT_ID: process.env.MCP_CLIENT_ID,
+            STRAVA_CLIENT_ID: process.env.STRAVA_CLIENT_ID,
+            STRAVA_CREDENTIAL_STORE: 'standalone',
+            TRUSTED_PROXY_MODE: 'azure-app-service',
+            HOST: '0.0.0.0',
+            NODE_ENV: 'production',
+          };
+          if (!target.httpsOnly || `https://${target.host}` !== process.env.MCP_PUBLIC_URL ||
+              Object.entries(expected).some(([key, value]) => settings[key] !== value) ||
+              !['DATABASE_URL', 'MCP_CLIENT_SECRET', 'STRAVA_CLIENT_SECRET', 'MCP_REDIRECT_URIS'].every(key => settings[key])) {
+            console.error('::error::Target does not match the bootstrapped standalone MCP runtime');
+            process.exit(1);
+          }
+          const key = settings.MCP_CREDENTIAL_ENCRYPTION_KEY || '';
+          const decoded = Buffer.from(key, 'base64');
+          let verifiedTls = false;
+          try {
+            const database = new URL(settings.DATABASE_URL);
+            verifiedTls = database.protocol === 'postgresql:' && database.pathname === '/runcoach_mcp' &&
+              database.searchParams.get('sslmode') === 'verify-full';
+          } catch {}
+          if (decoded.length !== 32 || decoded.toString('base64') !== key || !verifiedTls) {
+            console.error('::error::Invalid persistent credential encryption or database TLS configuration');
+            process.exit(1);
+          }
+          NODE
+
+      - name: Deploy MCP ZIP
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_MCP_APP_NAME }}
+          package: mcp-server/mcp-deploy.zip
+
+      - name: Verify health, OAuth discovery, and unauthenticated MCP challenge
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const base = process.env.MCP_PUBLIC_URL;
+          let healthy = false;
+          for (let attempt = 0; attempt < 30; attempt++) {
+            try {
+              const response = await fetch(`${base}/health`, { signal: AbortSignal.timeout(20000), redirect: 'error' });
+              healthy = response.ok && (await response.json()).status === 'ok';
+            } catch {}
+            if (healthy) break;
+            await new Promise(resolve => setTimeout(resolve, 10000));
+          }
+          if (!healthy) throw new Error('MCP startup/health failed; inspect startup and migration logs');
+          async function discovery(path) {
+            const response = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(20000), redirect: 'error' });
+            if (!response.ok) throw new Error('OAuth discovery unavailable');
+            return response.json();
+          }
+          const auth = await discovery('/.well-known/oauth-authorization-server');
+          const resource = await discovery('/.well-known/oauth-protected-resource/mcp');
+          if (auth.issuer !== base || auth.authorization_endpoint !== `${base}/oauth/authorize` ||
+              auth.token_endpoint !== `${base}/oauth/token` ||
+              !auth.code_challenge_methods_supported?.includes('S256') ||
+              resource.resource !== `${base}/mcp` || !resource.authorization_servers?.includes(base)) {
+            throw new Error('Incorrect OAuth discovery metadata');
+          }
+          const response = await fetch(`${base}/mcp`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+            signal: AbortSignal.timeout(20000), redirect: 'error',
+          });
+          const challenge = response.headers.get('www-authenticate') || '';
+          if (response.status !== 401 || !challenge.startsWith('Bearer ') ||
+              !challenge.includes(`resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`)) {
+            throw new Error('Unauthenticated MCP request did not return its resource challenge');
+          }
+          console.log('MCP health, discovery, and resource authentication checks passed');
+          NODE
+
+      - name: Remove credential files and logout
+        if: always()
+        shell: bash
+        run: |
+          rm -f mcp-target.json mcp-settings.json
+          az logout || true

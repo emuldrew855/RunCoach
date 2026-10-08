@@ -28,15 +28,19 @@ const limit = max => rateLimit({ windowMs: 60_000, limit: max, store: new Bounde
 export function createApp({ config, store, fetchImpl = fetch, strava = new Strava(config, store, fetchImpl) }) {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 'loopback');
+  app.set('trust proxy', config.trustedProxy ?? 'loopback');
   app.use((req, res, next) => {
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
       'Content-Security-Policy': "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
       'X-Content-Type-Options': 'nosniff' });
     const host = req.headers.host;
     if (host !== new URL(config.publicUrl).host || (req.headers.origin && !config.origins.includes(req.headers.origin))) return res.status(403).json({ error: 'untrusted_origin' });
-    const loopbackProxy = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
-    if (config.production && !req.secure && !(loopbackProxy && req.headers['x-forwarded-proto'] === 'https')) return res.status(400).json({ error: 'https_required' });
+    // Only one canonical protocol value from a trusted ingress is accepted.
+    // Express otherwise accepts the first value of an attacker-controlled chain.
+    if (config.production && (!req.secure ||
+        (!req.socket.encrypted && req.headers['x-forwarded-proto'] !== 'https'))) {
+      return res.status(400).json({ error: 'https_required' });
+    }
     // The reverse proxy must strip/replace forwarded headers and terminate TLS.
     if (req.headers.origin) {
       res.set({ 'Access-Control-Allow-Origin': req.headers.origin, Vary: 'Origin',
@@ -104,7 +108,10 @@ export function createApp({ config, store, fetchImpl = fetch, strava = new Strav
       if (query(req, 'error') || !query(req, 'code') || !STRAVA_SCOPES.every(scope => scopes.includes(scope))) throw new SafeError('strava_consent_required');
       return strava.authorize(query(req, 'code'));
     });
-    res.type('html').send(html(`<h1>Allow ChatGPT read-only running access?</h1><p>Strava account ${escape(data.athleteId)}. This grants access to run metrics and summaries for 30 days, not GPS, private descriptions, or write actions.</p><p>You have authorized the existing RunCoach Strava app. Its shared connection credentials have been updated to preserve RunCoach access. Denying below prevents ChatGPT access, but does not undo Strava app authorization.</p><form method="post" action="/oauth/consent"><input type="hidden" name="request" value="${escape(state)}"><input type="hidden" name="csrf" value="${escape(data.csrf)}"><button name="decision" value="allow">Allow</button><button name="decision" value="deny">Deny</button></form><p>You can disconnect this grant at <a href="/connections">Connections</a> after approval. Disconnect does not deauthorize the shared Strava app.</p>`));
+    const connectionNotice = config.storageMode === 'standalone'
+      ? 'You have authorized the MCP Strava app. Its connection credentials are stored separately from RunCoach.'
+      : 'You have authorized the existing RunCoach Strava app. Its shared connection credentials have been updated to preserve RunCoach access.';
+    res.type('html').send(html(`<h1>Allow ChatGPT read-only running access?</h1><p>Strava account ${escape(data.athleteId)}. This grants access to run metrics and summaries for 30 days, not GPS, private descriptions, or write actions.</p><p>${connectionNotice} Denying below prevents ChatGPT access, but does not undo Strava app authorization.</p><form method="post" action="/oauth/consent"><input type="hidden" name="request" value="${escape(state)}"><input type="hidden" name="csrf" value="${escape(data.csrf)}"><button name="decision" value="allow">Allow</button><button name="decision" value="deny">Deny</button></form><p>You can disconnect this grant at <a href="/connections">Connections</a> after approval. Disconnect does not deauthorize the Strava app.</p>`));
   });
   app.post('/oauth/consent', async (req, res) => {
     if (!['allow', 'deny'].includes(field(req, 'decision')) || !cookie(req, 'mcp_browser')) throw new SafeError('invalid_consent');
@@ -136,7 +143,7 @@ export function createApp({ config, store, fetchImpl = fetch, strava = new Strav
     const token = cookie(req, 'mcp_management');
     const grant = await store.authenticate(token, 'management');
     if (grant.resource !== config.resource || grant.client_id !== config.clientId) throw new SafeError('invalid_token', 401);
-    res.type('html').send(html(`<h1>RunCoach MCP connection</h1><p>Disconnect only this ChatGPT grant, not the shared Strava app.</p><form method="post" action="/connections"><input type="hidden" name="csrf" value="${escape(hash(token + ':disconnect'))}"><button>Disconnect</button></form>`));
+    res.type('html').send(html(`<h1>RunCoach MCP connection</h1><p>Disconnect only this ChatGPT grant, not the Strava app.</p><form method="post" action="/connections"><input type="hidden" name="csrf" value="${escape(hash(token + ':disconnect'))}"><button>Disconnect</button></form>`));
   });
   app.post('/connections', async (req, res) => {
     const token = cookie(req, 'mcp_management');

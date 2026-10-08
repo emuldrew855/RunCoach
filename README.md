@@ -203,6 +203,10 @@ Migrations are run automatically when the backend starts.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for Azure resource provisioning, safe database initialization, and live verification, and [GITHUB_SECRETS.md](GITHUB_SECRETS.md) for the `Prod` environment's OIDC configuration. GitHub Actions redeploys all three App Services on reviewed pushes to `main`/`master`; infrastructure must be provisioned first.
 
+### Standalone Strava MCP Deployment
+
+For the lightweight ChatGPT integration, use [mcp-server/README.md](mcp-server/README.md), `infra/mcp.bicep`, and the separate `deploy-mcp.yml` workflow with the `ProdMcp` environment. This deployment reuses the resource group but creates isolated hosting and encrypted credential storage; it does not need the full-stack application or an OpenAI API key. MCP-only changes do not trigger the full-stack deployment workflow.
+
 ### Backend Development
 ```bash
 cd backend

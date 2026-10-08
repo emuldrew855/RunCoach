@@ -1,4 +1,4 @@
-import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
+import { randomBytes, createHash, timingSafeEqual, createCipheriv, createDecipheriv } from 'node:crypto';
 
 export const random = () => randomBytes(32).toString('base64url');
 export const hash = value => createHash('sha256').update(value).digest('base64url');
@@ -13,7 +13,53 @@ const now = () => Date.now();
 const active = row => row && !row.revoked && new Date(row.expires_at).getTime() > now();
 
 export class PgStore {
-  constructor(pool) { this.pool = pool; }
+  constructor(pool, { storageMode = 'shared', credentialEncryptionKey } = {}) {
+    this.pool = pool;
+    if (!['shared', 'standalone'].includes(storageMode)) throw new Error('Invalid credential storage mode');
+    this.storageMode = storageMode;
+    if (storageMode === 'standalone') {
+      const key = Buffer.isBuffer(credentialEncryptionKey) ? Buffer.from(credentialEncryptionKey)
+        : typeof credentialEncryptionKey === 'string' ? Buffer.from(credentialEncryptionKey, 'base64') : Buffer.alloc(0);
+      if (key.length !== 32 || (typeof credentialEncryptionKey === 'string' && key.toString('base64') !== credentialEncryptionKey)) {
+        throw new Error('Standalone credential storage requires a base64-encoded 32-byte encryption key');
+      }
+      this.credentialEncryptionKey = key;
+    }
+  }
+  encryptCredentials(athleteId, credentials) {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.credentialEncryptionKey, iv);
+    cipher.setAAD(Buffer.from(`runcoach_mcp.credentials:v1:${BigInt(athleteId)}`));
+    const ciphertext = Buffer.concat([cipher.update(JSON.stringify(credentials), 'utf8'), cipher.final()]);
+    return Buffer.concat([Buffer.from([1]), iv, cipher.getAuthTag(), ciphertext]);
+  }
+  decryptCredentials(athleteId, encrypted) {
+    try {
+      if (!Buffer.isBuffer(encrypted) || encrypted.length < 30 || encrypted[0] !== 1) throw new Error();
+      const decipher = createDecipheriv('aes-256-gcm', this.credentialEncryptionKey, encrypted.subarray(1, 13));
+      decipher.setAAD(Buffer.from(`runcoach_mcp.credentials:v1:${BigInt(athleteId)}`));
+      decipher.setAuthTag(encrypted.subarray(13, 29));
+      const credentials = JSON.parse(Buffer.concat([decipher.update(encrypted.subarray(29)), decipher.final()]).toString('utf8'));
+      if (typeof credentials.access_token !== 'string' || typeof credentials.refresh_token !== 'string' || !Number.isFinite(credentials.expires_at)) throw new Error();
+      return credentials;
+    } catch {
+      throw new SafeError('credential_storage_unavailable', 503);
+    }
+  }
+  async initialize(db = this.pool) {
+    await db.query('SELECT 1 FROM runcoach_mcp.grants LIMIT 0');
+    if (this.storageMode === 'shared') {
+      await db.query('SELECT strava_id,access_token,refresh_token,token_expires_at FROM public.users LIMIT 0');
+    } else {
+      const { rows } = await db.query('SELECT athlete_id,encrypted_credentials FROM runcoach_mcp.credentials');
+      for (const row of rows) this.decryptCredentials(row.athlete_id, row.encrypted_credentials);
+    }
+  }
+  async lockCredentials(db) {
+    await db.query("SET LOCAL lock_timeout = '5s'");
+    // Identity is unknown at authorization. Both paths acquire the same registration-wide lock before upstream calls.
+    await db.query('SELECT pg_advisory_xact_lock(1919118701, 1)');
+  }
   async transaction(fn) {
     const client = await this.pool.connect();
     try { await client.query('BEGIN'); const result = await fn(client); await client.query('COMMIT'); return result; }
@@ -50,6 +96,15 @@ export class PgStore {
   }
   async authorizeCredentials(exchange) {
     return this.transaction(async db => {
+      if (this.storageMode === 'standalone') {
+        await this.lockCredentials(db);
+        const identity = await exchange();
+        await db.query(`INSERT INTO runcoach_mcp.credentials (athlete_id,encrypted_credentials)
+          VALUES ($1,$2) ON CONFLICT (athlete_id) DO UPDATE SET
+          encrypted_credentials=EXCLUDED.encrypted_credentials,updated_at=now()`,
+        [identity.athleteId, this.encryptCredentials(identity.athleteId, identity.credentials)]);
+        return { athleteId: identity.athleteId };
+      }
       await db.query("SET LOCAL lock_timeout = '5s'");
       // Identity is unknown until exchange; block row-locked refreshes before it can rotate credentials.
       await db.query('LOCK TABLE public.users IN EXCLUSIVE MODE');
@@ -125,6 +180,15 @@ export class PgStore {
   }
   async credentials(athleteId, fn) {
     return this.transaction(async db => {
+      if (this.storageMode === 'standalone') {
+        await this.lockCredentials(db);
+        const { rows: [row] } = await db.query('SELECT encrypted_credentials FROM runcoach_mcp.credentials WHERE athlete_id=$1 FOR UPDATE', [athleteId]);
+        if (!row) throw new SafeError('invalid_grant', 401);
+        const result = await fn(this.decryptCredentials(athleteId, row.encrypted_credentials));
+        if (result.credentials) await db.query('UPDATE runcoach_mcp.credentials SET encrypted_credentials=$2,updated_at=now() WHERE athlete_id=$1',
+          [athleteId, this.encryptCredentials(athleteId, result.credentials)]);
+        return result.value;
+      }
       const { rows: [row] } = await db.query('SELECT id,access_token,refresh_token,token_expires_at FROM public.users WHERE strava_id=$1 FOR UPDATE', [athleteId]);
       if (!row) throw new SafeError('invalid_grant', 401);
       const result = await fn({ access_token: row.access_token, refresh_token: row.refresh_token, expires_at: Number(row.token_expires_at) });

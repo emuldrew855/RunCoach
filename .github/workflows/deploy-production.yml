@@ -5,6 +5,12 @@ on:
     branches:
       - main
       - master
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'agent-service/**'
+      - 'infra/main.bicep'
+      - 'infra/resources.bicep'
   workflow_dispatch:
 
 permissions:
