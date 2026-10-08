@@ -3,7 +3,7 @@ import { exchangeCodeForToken } from '../services/stravaService';
 import { upsertUser } from '../models/User';
 import { generateToken } from '../utils/jwt';
 import { stravaConfig } from '../config/strava';
-import { query } from '../config/database';
+import { getClient, query } from '../config/database';
 import logger from '../utils/logger';
 
 export async function redirectToStrava(_req: Request, res: Response): Promise<void> {
@@ -27,9 +27,7 @@ export async function redirectToStrava(_req: Request, res: Response): Promise<vo
 
 export async function handleCallback(req: Request, res: Response): Promise<void> {
   logger.info('STRAVA_CALLBACK_HIT', {
-    query: req.query,
     hasCode: !!req.query.code,
-    state: req.query.state || 'NONE',
     scope: req.query.scope || 'NONE',
     error: req.query.error || 'NONE',
   });
@@ -38,27 +36,37 @@ export async function handleCallback(req: Request, res: Response): Promise<void>
     const { code } = req.query;
 
     if (!code || typeof code !== 'string') {
-      logger.warn('STRAVA_CALLBACK_NO_CODE', { query: req.query });
+      logger.warn('STRAVA_CALLBACK_NO_CODE');
       res.status(400).json({ error: 'Authorization code required' });
       return;
     }
 
-    logger.info('STRAVA_TOKEN_EXCHANGE_START');
-    const tokenResponse = await exchangeCodeForToken(code);
-    logger.info('STRAVA_TOKEN_EXCHANGE_SUCCESS', { athleteId: tokenResponse.athlete?.id });
-    const { access_token, refresh_token, expires_at, athlete } = tokenResponse;
-
-    logger.info('USER_UPSERT_START', { stravaId: athlete.id });
-    const user = await upsertUser({
-      strava_id: athlete.id,
-      email: athlete.email,
-      first_name: athlete.firstname,
-      last_name: athlete.lastname,
-      profile_picture_url: athlete.profile,
-      access_token,
-      refresh_token,
-      token_expires_at: expires_at,
-    });
+    const client = await getClient();
+    let user: Awaited<ReturnType<typeof upsertUser>>;
+    try {
+      await client.query('BEGIN');
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      // Match the MCP callback lock before Strava can rotate an unknown athlete's tokens.
+      await client.query('LOCK TABLE public.users IN EXCLUSIVE MODE');
+      logger.info('STRAVA_TOKEN_EXCHANGE_START');
+      const { access_token, refresh_token, expires_at, athlete } = await exchangeCodeForToken(code);
+      user = await upsertUser({
+        strava_id: athlete.id,
+        email: athlete.email,
+        first_name: athlete.firstname,
+        last_name: athlete.lastname,
+        profile_picture_url: athlete.profile,
+        access_token,
+        refresh_token,
+        token_expires_at: expires_at,
+      }, client.query.bind(client));
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
     logger.info('USER_UPSERT_SUCCESS', { userId: user.id });
 
     const jwt = generateToken({
@@ -74,7 +82,6 @@ export async function handleCallback(req: Request, res: Response): Promise<void>
     logger.error('AUTH_CALLBACK_ERROR', {
       message: error.message,
       responseStatus: error.response?.status,
-      responseData: error.response?.data,
       stack: error.stack,
     });
     res.redirect(`${process.env.FRONTEND_URL}/?error=auth_failed`);

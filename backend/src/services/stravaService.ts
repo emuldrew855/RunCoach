@@ -1,15 +1,9 @@
 import axios from 'axios';
 import { stravaConfig } from '../config/strava';
 import { StravaTokenResponse, StravaActivity } from '../types/models';
-import { getUserById, updateUser } from '../models/User';
+import { getClient } from '../config/database';
 
 export async function exchangeCodeForToken(code: string): Promise<StravaTokenResponse> {
-  console.log('Strava Config:', {
-    clientId: stravaConfig.clientId,
-    clientSecret: stravaConfig.clientSecret ? `${stravaConfig.clientSecret.substring(0, 10)}...` : 'MISSING',
-    redirectUri: stravaConfig.redirectUri,
-  });
-
   const requestData = {
     client_id: stravaConfig.clientId,
     client_secret: stravaConfig.clientSecret,
@@ -17,45 +11,56 @@ export async function exchangeCodeForToken(code: string): Promise<StravaTokenRes
     grant_type: 'authorization_code',
   };
 
-  console.log('Sending to Strava:', {
-    ...requestData,
-    client_secret: requestData.client_secret ? `${requestData.client_secret.substring(0, 10)}...` : 'MISSING',
-    code: `${code.substring(0, 10)}...`,
-  });
-
-  const response = await axios.post(stravaConfig.tokenUrl, requestData);
+  const response = await axios.post(stravaConfig.tokenUrl, requestData, { timeout: 15000 });
   return response.data;
 }
 
 export async function refreshStravaToken(userId: number): Promise<string> {
-  const user = await getUserById(userId);
-  if (!user) throw new Error('User not found');
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    // The MCP service shares this row lock so rotated Strava credentials cannot race.
+    const result = await client.query(
+      'SELECT access_token, refresh_token, token_expires_at FROM public.users WHERE id = $1 FOR UPDATE',
+      [userId]
+    );
+    const user = result.rows[0];
+    if (!user) throw new Error('User not found');
 
-  const now = Math.floor(Date.now() / 1000);
+    const now = Math.floor(Date.now() / 1000);
 
-  // Check if token is expired or will expire soon (within 1 hour)
-  if (user.token_expires_at > now + 3600) {
-    return user.access_token;
+    // Check if token is expired or will expire soon (within 1 hour)
+    if (user.token_expires_at > now + 3600) {
+      await client.query('COMMIT');
+      return user.access_token;
+    }
+
+    const response = await axios.post(stravaConfig.tokenUrl, {
+      client_id: stravaConfig.clientId,
+      client_secret: stravaConfig.clientSecret,
+      refresh_token: user.refresh_token,
+      grant_type: 'refresh_token',
+    }, { timeout: 10000 });
+
+    const { access_token, refresh_token, expires_at } = response.data;
+    if (typeof access_token !== 'string' || !access_token
+      || typeof refresh_token !== 'string' || !refresh_token
+      || !Number.isSafeInteger(expires_at) || expires_at <= now) {
+      throw new Error('Invalid Strava token response');
+    }
+    await client.query(
+      `UPDATE public.users SET access_token = $1, refresh_token = $2,
+       token_expires_at = $3, updated_at = NOW() WHERE id = $4`,
+      [access_token, refresh_token, expires_at, userId]
+    );
+    await client.query('COMMIT');
+    return access_token;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
-
-  // Refresh token
-  const response = await axios.post(stravaConfig.tokenUrl, {
-    client_id: stravaConfig.clientId,
-    client_secret: stravaConfig.clientSecret,
-    refresh_token: user.refresh_token,
-    grant_type: 'refresh_token',
-  });
-
-  const { access_token, refresh_token, expires_at } = response.data;
-
-  // Update user in database
-  await updateUser(userId, {
-    access_token,
-    refresh_token,
-    token_expires_at: expires_at,
-  });
-
-  return access_token;
 }
 
 export async function getStravaActivities(
