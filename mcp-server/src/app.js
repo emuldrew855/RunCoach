@@ -27,12 +27,16 @@ const limit = max => rateLimit({ windowMs: 60_000, limit: max, store: new Bounde
 
 export function createApp({ config, store, fetchImpl = fetch, strava = new Strava(config, store, fetchImpl) }) {
   const app = express();
+  const consentOrigins = [...new Set(config.redirects.map(uri => new URL(uri).origin))].join(' ');
   app.disable('x-powered-by');
   app.set('trust proxy', config.trustedProxy ?? 'loopback');
   app.use((req, res, next) => {
+    // Browsers enforce form-action on redirects too; OAuth still validates the exact callback URI.
+    const formAction = ['/strava/callback', '/oauth/consent'].includes(req.path)
+      ? `'self' ${consentOrigins}` : "'self'";
     // Strip OAuth paths/queries from referrers without making form POST origins opaque.
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'strict-origin',
-      'Content-Security-Policy': "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      'Content-Security-Policy': `default-src 'none'; form-action ${formAction}; frame-ancestors 'none'; base-uri 'none'`,
       'X-Content-Type-Options': 'nosniff' });
     const host = req.headers.host;
     if (host !== new URL(config.publicUrl).host || (req.headers.origin && !config.origins.includes(req.headers.origin))) return res.status(403).json({ error: 'untrusted_origin' });

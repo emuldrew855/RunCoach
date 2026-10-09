@@ -98,6 +98,8 @@ test('OAuth cookies behind Azure HTTPS ingress remain Secure, HttpOnly and SameS
     Origin: config.publicUrl, Cookie: browserCookie.split(';')[0], 'Content-Type': 'application/x-www-form-urlencoded' }, 'POST',
   new URLSearchParams({ request: 'test-request', csrf: 'test-csrf', decision: 'allow' }).toString());
   assert.equal(consent.status, 302);
+  assert.equal(consent.headers['content-security-policy'],
+    "default-src 'none'; form-action 'self' https://chatgpt.com; frame-ancestors 'none'; base-uri 'none'");
   const managementCookie = consent.headers['set-cookie'].find(value => value.startsWith('mcp_management='));
   for (const attribute of ['HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/']) assert.ok(managementCookie.includes(attribute));
 });
@@ -110,6 +112,8 @@ test('consent HTML preserves browser form origins without exposing OAuth paths o
   assert.ok(page.body.includes('action="/oauth/consent"'));
   assert.equal(page.headers['referrer-policy'], 'strict-origin');
   assert.equal(page.headers['cache-control'], 'no-store');
+  assert.equal(page.headers['content-security-policy'],
+    "default-src 'none'; form-action 'self' https://chatgpt.com; frame-ancestors 'none'; base-uri 'none'");
   for (const origin of ['null', 'https://evil.example.com']) {
     const rejected = await request('/oauth/consent', { 'X-Forwarded-Proto': 'https', Origin: origin,
       Cookie: 'mcp_browser=test-browser', 'Content-Type': 'application/x-www-form-urlencoded' }, 'POST',
@@ -117,6 +121,19 @@ test('consent HTML preserves browser form origins without exposing OAuth paths o
     assert.equal(rejected.status, 403);
     assert.equal(JSON.parse(rejected.body).error, 'untrusted_origin');
   }
+});
+
+test('only consent routes permit configured callback origins in their form policy', async t => {
+  const { request } = await fixture(t, { trustedProxy: 1,
+    redirects: ['https://chatgpt.com/callback', 'https://chatgpt.com/connector/oauth/test', 'https://client.example.com/callback'] }, '10.1.2.3');
+  const consent = await request('/strava/callback?state=test-request&code=test-code&scope=read,activity:read_all,profile:read_all',
+    { 'X-Forwarded-Proto': 'https', Cookie: 'mcp_browser=test-browser' });
+  assert.equal(consent.status, 200);
+  assert.equal(consent.headers['content-security-policy'],
+    "default-src 'none'; form-action 'self' https://chatgpt.com https://client.example.com; frame-ancestors 'none'; base-uri 'none'");
+  const health = await request('/health', { 'X-Forwarded-Proto': 'https' });
+  assert.equal(health.headers['content-security-policy'],
+    "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
 });
 
 test('development local HTTP remains usable without forwarded headers', async t => {

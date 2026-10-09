@@ -108,6 +108,14 @@ jobs:
           npm test -- --test-concurrency=1
           npm run check
 
+      - name: Validate browser consent redirects
+        working-directory: mcp-server
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/mcp-browser" --no-save --package-lock=false playwright@1.56.1
+          "$RUNNER_TEMP/mcp-browser/node_modules/.bin/playwright" install --with-deps chromium
+          MCP_BROWSER_TEST_MODULE="$RUNNER_TEMP/mcp-browser/node_modules/playwright" node browser-tests/consent.cjs
+
       - name: Return refreshed lockfile for review
         if: always() && steps.lockfile.outcome == 'success'
         uses: actions/upload-artifact@v4

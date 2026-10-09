@@ -182,6 +182,13 @@ forms retain their valid `Origin` header. Do not replace this with `no-referrer`
 or allow `Origin: null`; the former makes browser form origins opaque and the
 latter weakens origin validation.
 
+The consent routes' CSP `form-action` permits this server and only the origins of
+configured `MCP_REDIRECT_URIS`, because browsers also enforce it on the redirect
+after form submission. OAuth separately requires an exact registered callback
+URI; this does not enable arbitrary redirects. Other routes retain
+`form-action 'self'`. A self-only consent policy blocks the successful ChatGPT
+redirect after consuming consent, making a repeated click fail.
+
 ### 3. Configure Strava's callback
 
 This service uses `/strava/callback`, not RunCoach's `/api/v1/auth/callback`. Configure the standalone registration for the MCP hostname. In shared mode, keep the existing RunCoach callback unchanged.
