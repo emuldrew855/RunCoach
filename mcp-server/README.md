@@ -74,9 +74,9 @@ Tool input schemas:
 
 | Tool | Parameters and defaults |
 | --- | --- |
-| `get_recent_runs` | `days`: 1–90, default 30; `page`: 1–100, default 1; `per_page`: 1–50, default 20 |
+| `get_recent_runs` | `days`: 1–365, default 30; `page`: 1–100, default 1; `per_page`: 1–50, default 20 |
 | `get_run_details` | `activity_id`: positive safe integer, required; `split_offset`: 0–10,000, default 0; `split_limit`: 1–100, default 100 |
-| `get_weekly_summary` | `weeks`: 1–12, default 4 |
+| `get_weekly_summary` | `weeks`: 1–52, default 4 |
 
 For example, after MCP initialization, the client sends:
 
@@ -102,7 +102,9 @@ Identity always comes from the authorized MCP connection. Tools never accept a u
 
 - Runs include `Run`, `TrailRun`, and `VirtualRun`.
 - Tool input schemas reject unsupported parameters and enforce finite bounds.
+- Historical reviews can request up to 365 days of runs or 52 weekly buckets without changing the short-window defaults. For a six-month review, request 27 weeks to cover the partial current week as well as the preceding six months; use a sufficiently wide `days` window and filter the returned run dates to the precise calendar interval when needed. The connector reads accessible Strava history directly, not just RunCoach's locally synced activities.
 - Recent-run pagination applies to Strava's **all-activity** pages before filtering runs; a page may contain fewer runs or none. Follow pagination metadata rather than assuming a short list means there are no more runs.
+- Keep `days` and `per_page` unchanged when following `next_page`. Increasing the history window does not increase the per-call page size or the weekly summary's 1,000-activity budget.
 - Weekly totals use Monday-start **UTC** weeks, not RunCoach's local calendar preferences. The current week is partial.
 - Weekly retrieval has a fixed page budget. Results explicitly identify incomplete/truncated retrieval rather than presenting partial totals as complete.
 - Distances/elevation are meters, durations are seconds, heart rate is beats per minute, and pace is explicitly labeled.

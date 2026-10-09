@@ -16,10 +16,36 @@ const upstream = value => ({ get: async (athlete, path) => { assert.equal(athlet
 test('strict input bounds reject identities, unsafe ids, and runaway requests', () => {
   for (const [name, args] of [
     ['get_recent_runs', { userId: 2 }], ['get_recent_runs', { athleteId: 7 }],
-    ['get_recent_runs', { days: 91 }], ['get_recent_runs', { per_page: 51 }], ['get_recent_runs', { page: 0 }],
+    ['get_recent_runs', { days: 366 }], ['get_recent_runs', { days: 0 }], ['get_recent_runs', { days: 184.5 }],
+    ['get_recent_runs', { per_page: 51 }], ['get_recent_runs', { page: 0 }], ['get_recent_runs', { page: 101 }],
     ['get_run_details', { activity_id: Number.MAX_SAFE_INTEGER + 1 }], ['get_run_details', { activity_id: 1, split_limit: 101 }],
-    ['get_weekly_summary', { weeks: 13 }],
+    ['get_weekly_summary', { weeks: 53 }], ['get_weekly_summary', { weeks: 0 }], ['get_weekly_summary', { weeks: 27.5 }],
   ]) assert.equal(inputs[name].safeParse(args).success, false);
+});
+test('historical windows accept six months and maximum bounds without changing defaults', () => {
+  for (const days of [91, 184, 365]) assert.equal(inputs.get_recent_runs.parse({ days }).days, days);
+  for (const weeks of [13, 27, 52]) assert.equal(inputs.get_weekly_summary.parse({ weeks }).weeks, weeks);
+  assert.deepEqual(inputs.get_recent_runs.parse({}), { days: 30, page: 1, per_page: 20 });
+  assert.deepEqual(inputs.get_weekly_summary.parse({}), { weeks: 4 });
+});
+test('six-month run listing retrieves older runs after an empty all-sport page', async () => {
+  const after = Math.floor(date.getTime() / 1000 - 184 * 86400);
+  const older = { ...run, id: 43, start_date: '2026-04-15T10:00:00Z' };
+  const requests = [];
+  const api = { get: async (athlete, path, params) => {
+    assert.equal(athlete, 7); assert.equal(path, 'athlete/activities');
+    assert.equal(params.after, after); assert.equal(params.per_page, 2);
+    requests.push(params.page);
+    return params.page === 1 ? [{ ...run, sport_type: 'Ride' }, { ...run, sport_type: 'Swim' }] :
+      [older, { ...run, id: 44, start_date: new Date(after * 1000).toISOString() }];
+  } };
+  const first = await callTool('get_recent_runs', { days: 184, per_page: 2 }, grant, api, clock);
+  assert.deepEqual(first.runs, []); assert.equal(first.next_page, 2);
+  const second = await callTool('get_recent_runs', { days: 184, per_page: 2, page: first.next_page }, grant, api, clock);
+  assert.deepEqual(second.runs.map(a => a.activity_id), [43]);
+  assert.deepEqual(requests, [1, 2]);
+  const exhausted = await callTool('get_recent_runs', { days: 365, page: 100, per_page: 1 }, grant, upstream([older]), clock);
+  assert.equal(exhausted.has_more, true); assert.equal(exhausted.next_page, null);
 });
 test('details enforce ownership before returning data and require run sports', async () => {
   await assert.rejects(callTool('get_run_details', { activity_id: 42 }, grant, upstream({ ...run, athlete: { id: 8 } }), clock), /activity_not_owned/);
@@ -53,6 +79,41 @@ test('weekly aggregation uses UTC Monday, deduplicates and reports truncation', 
   assert.equal(result.weeks[1].distance_meters, 1_000_000);
   const complete = await callTool('get_weekly_summary', { weeks: 1 }, grant, upstream([run]), clock);
   assert.equal(complete.partial, false); assert.equal(complete.current_week_incomplete, true);
+});
+test('six-month summaries include April-June runs across pages and retain empty weeks', async () => {
+  const start = new Date('2026-04-06T00:00:00Z');
+  const april = { ...run, id: 43, start_date: '2026-04-15T10:00:00Z' };
+  const june = { ...run, id: 44, start_date: '2026-06-15T10:00:00Z' };
+  let calls = 0;
+  const api = { get: async (athlete, path, params) => {
+    assert.equal(athlete, 7); assert.equal(path, 'athlete/activities');
+    assert.equal(params.after, start.getTime() / 1000 - 1);
+    assert.equal(params.before, date.getTime() / 1000 + 1);
+    assert.equal(params.per_page, 100); assert.equal(params.page, ++calls);
+    return params.page === 1 ? Array.from({ length: 100 }, (_, i) => ({ ...run, id: i + 100, sport_type: 'Ride' })) :
+      [run, april, june, april, { ...april, id: 45, start_date: '2026-04-05T23:59:59Z' },
+        { ...run, id: 46, start_date: '2026-10-08T08:00:01Z' }];
+  } };
+  const result = await callTool('get_weekly_summary', { weeks: 27 }, grant, api, clock);
+  assert.equal(result.weeks.length, 27); assert.equal(result.weeks[0].week_start, '2026-04-06');
+  for (const weekStart of ['2026-04-13', '2026-06-15', '2026-10-05']) {
+    const week = result.weeks.find(w => w.week_start === weekStart);
+    assert.equal(week.runs, 1); assert.equal(week.distance_meters, 10000);
+    assert.equal(week.moving_time_seconds, 3000);
+  }
+  assert.equal(result.weeks[0].runs, 0);
+  assert.equal(result.weeks.reduce((sum, w) => sum + w.runs, 0), 3);
+  assert.equal(result.upstream_pages, 2); assert.equal(result.partial, false);
+  assert.equal(result.truncated, false); assert.equal(result.current_week_incomplete, true);
+  assert.equal(result.timezone, 'UTC'); assert.equal(result.week_starts_on, 'Monday');
+});
+test('maximum weekly window preserves response and upstream retrieval bounds', async () => {
+  let calls = 0;
+  const api = { get: async () => { calls++; return Array.from({ length: 100 }, (_, i) => ({ ...run, id: i + 1 })); } };
+  const result = await callTool('get_weekly_summary', { weeks: 52 }, grant, api, clock);
+  assert.equal(result.weeks.length, 52); assert.equal(result.weeks[0].week_start, '2025-10-13');
+  assert.equal(calls, 10); assert.equal(result.upstream_pages, 10);
+  assert.equal(result.max_activities, 1000); assert.equal(result.partial, true); assert.equal(result.truncated, true);
 });
 test('Strava errors redact upstream bodies and forward bounded Retry-After', async () => {
   const api = new Strava({}, {}, async () => new Response('private token body', { status: 429, headers: { 'Retry-After': '120' } }));
