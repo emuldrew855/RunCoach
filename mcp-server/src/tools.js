@@ -3,9 +3,9 @@ import { SafeError } from './store.js';
 
 const integer = (min, max) => z.number().int().min(min).max(max);
 export const inputs = {
-  get_recent_runs: z.object({ days: integer(1, 90).default(30), page: integer(1, 100).default(1), per_page: integer(1, 50).default(20) }).strict(),
+  get_recent_runs: z.object({ days: integer(1, 365).default(30), page: integer(1, 100).default(1), per_page: integer(1, 50).default(20) }).strict(),
   get_run_details: z.object({ activity_id: integer(1, Number.MAX_SAFE_INTEGER), split_offset: integer(0, 10000).default(0), split_limit: integer(1, 100).default(100) }).strict(),
-  get_weekly_summary: z.object({ weeks: integer(1, 12).default(4) }).strict(),
+  get_weekly_summary: z.object({ weeks: integer(1, 52).default(4) }).strict(),
 };
 export const isRun = activity => ['Run', 'TrailRun', 'VirtualRun'].includes(activity.sport_type || activity.type);
 const numericFields = ['distance', 'moving_time', 'elapsed_time', 'total_elevation_gain', 'average_speed', 'max_speed', 'average_heartrate', 'max_heartrate', 'average_cadence'];
@@ -80,7 +80,7 @@ export async function callTool(name, raw, grant, strava, clock = () => new Date(
 export function registerTools(server, grant, strava) {
   for (const [name, schema] of Object.entries(inputs)) {
     server.registerTool(name, {
-      description: { get_recent_runs: 'Recent accessible runs; page limits apply to all sports.', get_run_details: 'Owned run metrics and bounded metric splits, without GPS or descriptions.', get_weekly_summary: 'UTC Monday weekly run totals; explicitly reports bounded-fetch truncation.' }[name],
+      description: { get_recent_runs: 'Accessible runs over the last 1-365 days (default 30), including historical training reviews. Follow next_page with the same days and per_page until null; page limits apply to all sports, even when runs is empty.', get_run_details: 'Owned run metrics and bounded metric splits, without GPS or descriptions.', get_weekly_summary: 'UTC Monday weekly run totals over 1-52 weeks (default 4). For a six-month review request 27 weeks to include the partial current week. Explicitly reports bounded-fetch truncation; do not treat partial totals as complete.' }[name],
       inputSchema: schema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async args => {
       try {

@@ -7,7 +7,7 @@
     "get_recent_runs_input": {
       "type": "object", "additionalProperties": false,
       "properties": {
-        "days": { "type": "integer", "minimum": 1, "maximum": 90, "default": 30 },
+        "days": { "type": "integer", "minimum": 1, "maximum": 365, "default": 30 },
         "page": { "type": "integer", "minimum": 1, "maximum": 100, "default": 1 },
         "per_page": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 }
       }
@@ -22,7 +22,7 @@
     },
     "get_weekly_summary_input": {
       "type": "object", "additionalProperties": false,
-      "properties": { "weeks": { "type": "integer", "minimum": 1, "maximum": 12, "default": 4 } }
+      "properties": { "weeks": { "type": "integer", "minimum": 1, "maximum": 52, "default": 4 } }
     },
     "run": {
       "type": "object", "additionalProperties": false, "required": ["activity_id", "type"],
@@ -77,7 +77,7 @@
       "required": ["fetched_at", "weeks", "timezone", "week_starts_on", "current_week_incomplete", "partial", "truncated", "upstream_pages", "max_activities", "coverage"],
       "properties": {
         "fetched_at": { "type": "string", "format": "date-time" },
-        "weeks": { "type": "array", "maxItems": 12, "items": {
+        "weeks": { "type": "array", "maxItems": 52, "items": {
           "type": "object", "additionalProperties": false,
           "required": ["week_start", "runs", "distance_meters", "moving_time_seconds", "elevation_meters"],
           "properties": {
