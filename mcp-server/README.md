@@ -58,7 +58,7 @@ ChatGPT → MCP /mcp → Strava API → compact running data → ChatGPT
 
 Strava OAuth authorizes the service to read Strava data. The outer MCP OAuth flow authorizes ChatGPT to use that runner's connection. Neither authorization grants write access.
 
-The Strava request uses `read,activity:read_all,profile:read_all` scopes; retaining these in shared mode prevents removing the existing app's access. Missing/deselected permissions are rejected before exchanging the code. MCP tools expose only running metrics, not athlete profiles. Successful Strava authorization updates the selected credential store **even if the runner subsequently denies ChatGPT consent**; denial creates no MCP grant.
+The Strava request uses `read,activity:read_all,profile:read_all` scopes; retaining these in shared mode prevents removing the existing app's access. Missing/deselected permissions are rejected before exchanging the code. MCP tools expose running and cross-training metrics, not athlete profiles. Successful Strava authorization updates the selected credential store **even if the runner subsequently denies ChatGPT consent**; denial creates no MCP grant.
 
 ## Tool-to-Strava mapping
 
@@ -69,14 +69,22 @@ MCP tools are JSON-RPC calls to the **single `/mcp` transport endpoint**, not se
 | `get_recent_runs` | `GET https://www.strava.com/api/v3/athlete/activities` | A bounded page of runs, with date, distance, duration, pace, elevation, and available heart-rate/cadence metrics |
 | `get_run_details` | `GET https://www.strava.com/api/v3/activities/{activity_id}` | One owned run plus a bounded page of metric splits |
 | `get_weekly_summary` | Bounded, paginated `GET https://www.strava.com/api/v3/athlete/activities` | Weekly run counts, distance, duration, and elevation totals |
+| `get_training_summary` | Bounded, paginated activity listing | Exact-date running totals, active days, frequency, weighted pace, weekly breakdown and five longest runs |
+| `compare_training_periods` | Two bounded activity listings | Baseline/comparison summaries, signed deltas and duration-normalized weekly rates |
+| `get_activity_streams` | Owned run details, then `GET https://www.strava.com/api/v3/activities/{activity_id}/streams` | Aligned, sampled time, distance, speed, heart-rate, cadence and altitude; no GPS |
+| `get_recent_activities` | Paginated activity listing | Safe metrics for all sports, including cycling, swimming and strength training |
 
 Tool input schemas:
 
 | Tool | Parameters and defaults |
 | --- | --- |
-| `get_recent_runs` | `days`: 1–90, default 30; `page`: 1–100, default 1; `per_page`: 1–50, default 20 |
+| `get_recent_runs` | `days`: 1–365, default 30; `page`: 1–100, default 1; `per_page`: 1–50, default 20 |
 | `get_run_details` | `activity_id`: positive safe integer, required; `split_offset`: 0–10,000, default 0; `split_limit`: 1–100, default 100 |
-| `get_weekly_summary` | `weeks`: 1–12, default 4 |
+| `get_weekly_summary` | `weeks`: 1–52, default 4 |
+| `get_training_summary` | Required `start_date`, `end_date`: real `YYYY-MM-DD` UTC dates, inclusive, ordered, no later than today; at most 365 calendar days |
+| `compare_training_periods` | Required `baseline` and `comparison`, each containing `start_date` and `end_date` under the same summary constraints |
+| `get_activity_streams` | Required positive safe-integer `activity_id`; `max_points`: 2–1,000, default 200 |
+| `get_recent_activities` | Same `days`, `page`, `per_page` bounds and defaults as `get_recent_runs` |
 
 For example, after MCP initialization, the client sends:
 
@@ -102,7 +110,17 @@ Identity always comes from the authorized MCP connection. Tools never accept a u
 
 - Runs include `Run`, `TrailRun`, and `VirtualRun`.
 - Tool input schemas reject unsupported parameters and enforce finite bounds.
+- Historical reviews can request up to 365 days of runs or 52 weekly buckets without changing the short-window defaults. For a six-month review, request 28 weeks to cover the partial current week and calendar-month boundary; use a sufficiently wide `days` window and filter the returned run dates to the precise calendar interval when needed. Weekly boundary buckets can include days outside that interval. The connector reads accessible Strava history directly, not just RunCoach's locally synced activities.
+- Prefer `get_training_summary` for exact calendar dates: include both boundary days, exclude records outside them, and clip today's end to fetch time. Boundary weekly buckets contain only runs in the requested period and mark `calendar_week_incomplete`. Weekly rates use the inclusive calendar-day count (today counts as a day, even though it is incomplete).
+- Each summary fetches at most 10 pages of 100 **all-sport** activities; comparisons fetch at most 20 pages total. `partial`/`truncated` mean that this budget was exhausted, even if few runs were found. Empty weeks are retained, duplicate activity IDs are counted once, and coverage means accessible Strava data, not proof that every workout was recorded.
+- Summary totals sum available distance/time/elevation only. Check `metric_coverage` before treating totals as complete. Weighted pace uses only runs with positive paired distance and moving time. No heart-rate zones or missing sensor values are invented.
+- Comparison deltas are comparison minus baseline; a negative pace delta means faster descriptive pace. Percentage change is null for a zero baseline. Deltas are withheld for truncated retrieval or incomplete corresponding metrics; these comparisons do not establish improved fitness or injury risk.
+- Streams first verify ownership and running sport, then request only six allowlisted non-GPS series. Available series must align to time and contain valid numbers. `missing_streams` identifies absent sensors; `upstream_reduced` flags upstream downsampling when indicated by Strava. More than 200,000 source points is rejected.
+- Stream output uniformly selects common source indices, including the first and last points, without interpolation; `sampled`, `source_points` and `returned_points` describe this reduction. It is not a complete interval trace and may miss peaks. Use metric splits for exact split-level review.
+- All-sport listings retain speeds in meters/second; running pace is only added for running sports. No running-only pace assumptions are applied to rides or swims.
 - Recent-run pagination applies to Strava's **all-activity** pages before filtering runs; a page may contain fewer runs or none. Follow pagination metadata rather than assuming a short list means there are no more runs.
+- Keep `days` and `per_page` unchanged when following `next_page`. Increasing the history window does not increase the per-call page size or the weekly summary's 1,000-activity budget.
+- If `has_more` is true but `next_page` is null, the 100-page cap was reached, not the end of history. Narrow the date window; `get_recent_activities` also reports this as `truncated`.
 - Weekly totals use Monday-start **UTC** weeks, not RunCoach's local calendar preferences. The current week is partial.
 - Weekly retrieval has a fixed page budget. Results explicitly identify incomplete/truncated retrieval rather than presenting partial totals as complete.
 - Distances/elevation are meters, durations are seconds, heart rate is beats per minute, and pace is explicitly labeled.
@@ -112,6 +130,23 @@ Identity always comes from the authorized MCP connection. Tools never accept a u
 - Outputs exclude Strava credentials, GPS coordinates/polylines, locations, athlete profiles, and unrelated private data.
 - Activity titles are untrusted user content, not instructions to ChatGPT.
 - No tools sync the RunCoach database, modify training plans, or create/edit Strava activities.
+
+After deploying tool changes, **Refresh** the RunCoach connection's metadata in
+ChatGPT Settings > Apps (or Plugins), confirm all seven tools are listed, and
+start a new conversation. These additions use the existing Strava permissions;
+they do not require reconnecting Strava.
+
+Example exact-date arguments:
+
+```json
+{"start_date":"2026-04-01","end_date":"2026-09-30"}
+```
+
+Example comparison arguments:
+
+```json
+{"baseline":{"start_date":"2026-08-01","end_date":"2026-08-31"},"comparison":{"start_date":"2026-09-01","end_date":"2026-09-30"}}
+```
 
 ## Setup
 
@@ -541,7 +576,7 @@ Azure authentication/bootstrap and public-endpoint live checks remain operator t
 1. Confirm Strava vendor approval, the dedicated registration (or completed cutover), exact callback domain, confidential ChatGPT client credentials, and registered callback URI.
 2. Verify public HTTPS `/health`, both discovery documents, and unauthenticated `/mcp` returning `401` with discovery; confirm issuer/resource URLs use the configured HTTPS origin.
 3. Connect the real ChatGPT client: authorize Strava, validate the displayed consent, approve it, and complete authenticated PKCE exchange. Confirm ChatGPT never receives Strava tokens.
-4. Discover all three tools; retrieve recent runs, details of an owned run, and weekly totals. Compare dates/metrics to Strava; check UTC week boundaries, units, pagination/truncation, and a run without splits.
+4. Refresh connection metadata and discover all seven tools. Check recent runs/all-sport activities, owned run details/streams, weekly totals, an exact-date summary and a two-period comparison against Strava. Check UTC boundaries, units, pagination/truncation, missing metrics and a run without splits or sensors.
 5. Deny consent in a fresh attempt: no usable MCP grant. Repeat login with expired/altered/replayed state or authorization codes and verify rejection.
 6. Exercise refresh/rotation and restart/redeploy with the **same** encryption key; confirm continued access without storing or logging plaintext credentials.
 7. Disconnect/revoke; verify old access and refresh tokens fail, then reconnect successfully. Verify revocation does not deauthorize the Strava application.

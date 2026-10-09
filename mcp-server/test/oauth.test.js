@@ -7,6 +7,7 @@ import { createApp } from '../src/app.js';
 import { PgStore, random, hash } from '../src/store.js';
 import { Strava } from '../src/strava.js';
 import { STRAVA_SCOPES } from '../src/config.js';
+import { inputs } from '../src/tools.js';
 
 test('OAuth/MCP HTTP and PostgreSQL transaction integration', { skip: !process.env.MCP_TEST_DATABASE_URL }, async t => {
   assert.ok(new URL(process.env.MCP_TEST_DATABASE_URL).pathname.endsWith('_test'), 'Use a dedicated database ending in _test; these tests clear the MCP schema');
@@ -29,7 +30,9 @@ test('OAuth/MCP HTTP and PostgreSQL transaction integration', { skip: !process.e
     authorize: async () => ({ athleteId: currentAthlete, credentials: { access_token: 'test-upstream-' + ++exchanges, refresh_token: 'test-refresh-' + exchanges, expires_at: Math.floor(Date.now() / 1000) + 3600 } }),
     get: async (id, path) => {
       assert.ok([7, 8].includes(id));
-      return path === 'athlete/activities' ? [] : { id: 1, athlete: { id }, type: 'Run', start_date: new Date().toISOString() };
+      if (path === 'athlete/activities') return [];
+      if (path === 'activities/1/streams') return { time: { data: [0, 1] }, heartrate: { data: [120, 121] } };
+      return { id: 1, athlete: { id }, type: 'Run', start_date: new Date(Date.now() - 60000).toISOString() };
     },
   };
   const server = createApp({ config, store, strava }).listen(0, '127.0.0.1');
@@ -183,11 +186,26 @@ test('OAuth/MCP HTTP and PostgreSQL transaction integration', { skip: !process.e
       const init = await mcp(tokens.access_token, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'tests', version: '1' } } });
       assert.equal(init.status, 200); assert.equal((await init.json()).result.serverInfo.name, 'runcoach-strava-readonly');
       const listed = await mcp(tokens.access_token, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
-      assert.equal((await listed.json()).result.tools.length, 3);
+      const tools = (await listed.json()).result.tools;
+      assert.deepEqual(tools.map(tool => tool.name).sort(), Object.keys(inputs).sort());
+      assert.equal(tools.length, 7);
+      for (const tool of tools) assert.equal(tool.annotations.readOnlyHint, true);
       const called = await mcp(tokens.access_token, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'get_recent_runs', arguments: {} } });
       assert.deepEqual((await called.json()).result.structuredContent.runs, []);
       const rejected = await mcp(tokens.access_token, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'get_recent_runs', arguments: { athleteId: 8 } } });
       assert.equal((await rejected.json()).result.isError, true);
+      const today = new Date().toISOString().slice(0, 10);
+      for (const [name, args] of [
+        ['get_recent_activities', {}],
+        ['get_training_summary', { start_date: today, end_date: today }],
+        ['compare_training_periods', { baseline: { start_date: today, end_date: today }, comparison: { start_date: today, end_date: today } }],
+        ['get_activity_streams', { activity_id: 1 }],
+      ]) {
+        const response = await mcp(tokens.access_token, { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name, arguments: args } });
+        const result = (await response.json()).result;
+        assert.notEqual(result.isError, true);
+        assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
+      }
     });
     await t.test('refresh rotation/replay, invalid resource and client binding', async () => {
       assert.equal((await post('/oauth/token', { ...client, grant_type: 'refresh_token', refresh_token: tokens.refresh_token, resource: 'https://wrong.example.com/mcp' })).status, 400);
