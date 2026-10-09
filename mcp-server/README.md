@@ -176,6 +176,12 @@ Generate the standalone encryption key in a protected provisioning environment w
 
 `MCP_ALLOWED_ORIGINS` lists permitted browser origins for MCP/CORS requests; the service's own origin is also permitted. `PORT` controls the listener: the example uses `3002`, which may already be occupied by RunCoach's agent service. Choose a different port if both are running on the same host.
 
+Browser responses use `Referrer-Policy: strict-origin`: referrers contain only the
+origin, never OAuth paths or queries, while same-origin consent and disconnect
+forms retain their valid `Origin` header. Do not replace this with `no-referrer`
+or allow `Origin: null`; the former makes browser form origins opaque and the
+latter weakens origin validation.
+
 ### 3. Configure Strava's callback
 
 This service uses `/strava/callback`, not RunCoach's `/api/v1/auth/callback`. Configure the standalone registration for the MCP hostname. In shared mode, keep the existing RunCoach callback unchanged.

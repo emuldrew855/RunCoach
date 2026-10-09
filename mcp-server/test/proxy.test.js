@@ -15,6 +15,7 @@ const config = {
 async function fixture(t, overrides = {}, remoteAddress) {
   const store = {
     createRequest: async () => {},
+    stravaCallback: async () => ({ athleteId: 7, csrf: 'test-csrf' }),
     consent: async () => ({ management: 'test-management', code: 'test-code',
       data: { redirectUri: config.redirects[0], state: 'test-state' } }),
   };
@@ -94,11 +95,28 @@ test('OAuth cookies behind Azure HTTPS ingress remain Secure, HttpOnly and SameS
   const browserCookie = authorize.headers['set-cookie'][0];
   for (const attribute of ['HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/']) assert.ok(browserCookie.includes(attribute));
   const consent = await request('/oauth/consent', { 'X-Forwarded-Proto': 'https',
-    Cookie: browserCookie.split(';')[0], 'Content-Type': 'application/x-www-form-urlencoded' }, 'POST',
+    Origin: config.publicUrl, Cookie: browserCookie.split(';')[0], 'Content-Type': 'application/x-www-form-urlencoded' }, 'POST',
   new URLSearchParams({ request: 'test-request', csrf: 'test-csrf', decision: 'allow' }).toString());
   assert.equal(consent.status, 302);
   const managementCookie = consent.headers['set-cookie'].find(value => value.startsWith('mcp_management='));
   for (const attribute of ['HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/']) assert.ok(managementCookie.includes(attribute));
+});
+
+test('consent HTML preserves browser form origins without exposing OAuth paths or queries', async t => {
+  const { request } = await fixture(t, { trustedProxy: 1 }, '10.1.2.3');
+  const params = new URLSearchParams({ state: 'test-request', code: 'test-code', scope: 'read,activity:read_all,profile:read_all' });
+  const page = await request('/strava/callback?' + params, { 'X-Forwarded-Proto': 'https', Cookie: 'mcp_browser=test-browser' });
+  assert.equal(page.status, 200);
+  assert.ok(page.body.includes('action="/oauth/consent"'));
+  assert.equal(page.headers['referrer-policy'], 'strict-origin');
+  assert.equal(page.headers['cache-control'], 'no-store');
+  for (const origin of ['null', 'https://evil.example.com']) {
+    const rejected = await request('/oauth/consent', { 'X-Forwarded-Proto': 'https', Origin: origin,
+      Cookie: 'mcp_browser=test-browser', 'Content-Type': 'application/x-www-form-urlencoded' }, 'POST',
+    new URLSearchParams({ request: 'test-request', csrf: 'test-csrf', decision: 'allow' }).toString());
+    assert.equal(rejected.status, 403);
+    assert.equal(JSON.parse(rejected.body).error, 'untrusted_origin');
+  }
 });
 
 test('development local HTTP remains usable without forwarded headers', async t => {

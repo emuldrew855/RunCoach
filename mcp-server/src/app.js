@@ -30,7 +30,8 @@ export function createApp({ config, store, fetchImpl = fetch, strava = new Strav
   app.disable('x-powered-by');
   app.set('trust proxy', config.trustedProxy ?? 'loopback');
   app.use((req, res, next) => {
-    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
+    // Strip OAuth paths/queries from referrers without making form POST origins opaque.
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'strict-origin',
       'Content-Security-Policy': "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
       'X-Content-Type-Options': 'nosniff' });
     const host = req.headers.host;
