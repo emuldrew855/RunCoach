@@ -80,7 +80,7 @@ export async function callTool(name, raw, grant, strava, clock = () => new Date(
 export function registerTools(server, grant, strava) {
   for (const [name, schema] of Object.entries(inputs)) {
     server.registerTool(name, {
-      description: { get_recent_runs: 'Accessible runs over the last 1-365 days (default 30), including historical training reviews. Follow next_page with the same days and per_page until null; page limits apply to all sports, even when runs is empty.', get_run_details: 'Owned run metrics and bounded metric splits, without GPS or descriptions.', get_weekly_summary: 'UTC Monday weekly run totals over 1-52 weeks (default 4). For a six-month review request 27 weeks to include the partial current week. Explicitly reports bounded-fetch truncation; do not treat partial totals as complete.' }[name],
+      description: { get_recent_runs: 'Accessible runs over the last 1-365 days (default 30), including historical training reviews. Follow next_page with the same days and per_page until null; page limits apply to all sports, even when runs is empty.', get_run_details: 'Owned run metrics and bounded metric splits, without GPS or descriptions.', get_weekly_summary: 'UTC Monday weekly run totals over 1-52 weeks (default 4). For a six-month review request 28 weeks to include the partial current week and the calendar-month boundary. Explicitly reports bounded-fetch truncation; do not treat partial totals as complete.' }[name],
       inputSchema: schema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async args => {
       try {

@@ -102,7 +102,7 @@ Identity always comes from the authorized MCP connection. Tools never accept a u
 
 - Runs include `Run`, `TrailRun`, and `VirtualRun`.
 - Tool input schemas reject unsupported parameters and enforce finite bounds.
-- Historical reviews can request up to 365 days of runs or 52 weekly buckets without changing the short-window defaults. For a six-month review, request 27 weeks to cover the partial current week as well as the preceding six months; use a sufficiently wide `days` window and filter the returned run dates to the precise calendar interval when needed. The connector reads accessible Strava history directly, not just RunCoach's locally synced activities.
+- Historical reviews can request up to 365 days of runs or 52 weekly buckets without changing the short-window defaults. For a six-month review, request 28 weeks to cover the partial current week and calendar-month boundary; use a sufficiently wide `days` window and filter the returned run dates to the precise calendar interval when needed. Weekly boundary buckets can include days outside that interval. The connector reads accessible Strava history directly, not just RunCoach's locally synced activities.
 - Recent-run pagination applies to Strava's **all-activity** pages before filtering runs; a page may contain fewer runs or none. Follow pagination metadata rather than assuming a short list means there are no more runs.
 - Keep `days` and `per_page` unchanged when following `next_page`. Increasing the history window does not increase the per-call page size or the weekly summary's 1,000-activity budget.
 - Weekly totals use Monday-start **UTC** weeks, not RunCoach's local calendar preferences. The current week is partial.

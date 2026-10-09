@@ -24,7 +24,7 @@ test('strict input bounds reject identities, unsafe ids, and runaway requests', 
 });
 test('historical windows accept six months and maximum bounds without changing defaults', () => {
   for (const days of [91, 184, 365]) assert.equal(inputs.get_recent_runs.parse({ days }).days, days);
-  for (const weeks of [13, 27, 52]) assert.equal(inputs.get_weekly_summary.parse({ weeks }).weeks, weeks);
+  for (const weeks of [13, 28, 52]) assert.equal(inputs.get_weekly_summary.parse({ weeks }).weeks, weeks);
   assert.deepEqual(inputs.get_recent_runs.parse({}), { days: 30, page: 1, per_page: 20 });
   assert.deepEqual(inputs.get_weekly_summary.parse({}), { weeks: 4 });
 });
@@ -81,7 +81,7 @@ test('weekly aggregation uses UTC Monday, deduplicates and reports truncation', 
   assert.equal(complete.partial, false); assert.equal(complete.current_week_incomplete, true);
 });
 test('six-month summaries include April-June runs across pages and retain empty weeks', async () => {
-  const start = new Date('2026-04-06T00:00:00Z');
+  const start = new Date('2026-03-30T00:00:00Z');
   const april = { ...run, id: 43, start_date: '2026-04-15T10:00:00Z' };
   const june = { ...run, id: 44, start_date: '2026-06-15T10:00:00Z' };
   let calls = 0;
@@ -91,11 +91,11 @@ test('six-month summaries include April-June runs across pages and retain empty 
     assert.equal(params.before, date.getTime() / 1000 + 1);
     assert.equal(params.per_page, 100); assert.equal(params.page, ++calls);
     return params.page === 1 ? Array.from({ length: 100 }, (_, i) => ({ ...run, id: i + 100, sport_type: 'Ride' })) :
-      [run, april, june, april, { ...april, id: 45, start_date: '2026-04-05T23:59:59Z' },
+      [run, april, june, april, { ...april, id: 45, start_date: '2026-03-29T23:59:59Z' },
         { ...run, id: 46, start_date: '2026-10-08T08:00:01Z' }];
   } };
-  const result = await callTool('get_weekly_summary', { weeks: 27 }, grant, api, clock);
-  assert.equal(result.weeks.length, 27); assert.equal(result.weeks[0].week_start, '2026-04-06');
+  const result = await callTool('get_weekly_summary', { weeks: 28 }, grant, api, clock);
+  assert.equal(result.weeks.length, 28); assert.equal(result.weeks[0].week_start, '2026-03-30');
   for (const weekStart of ['2026-04-13', '2026-06-15', '2026-10-05']) {
     const week = result.weeks.find(w => w.week_start === weekStart);
     assert.equal(week.runs, 1); assert.equal(week.distance_meters, 10000);
@@ -114,6 +114,14 @@ test('maximum weekly window preserves response and upstream retrieval bounds', a
   assert.equal(result.weeks.length, 52); assert.equal(result.weeks[0].week_start, '2025-10-13');
   assert.equal(calls, 10); assert.equal(result.upstream_pages, 10);
   assert.equal(result.max_activities, 1000); assert.equal(result.partial, true); assert.equal(result.truncated, true);
+});
+test('28 weekly buckets cover six calendar months even at the start of Monday', async () => {
+  const monday = new Date('2026-10-05T00:00:00Z');
+  const boundaryRun = { ...run, start_date: '2026-04-05T10:00:00Z' };
+  const result = await callTool('get_weekly_summary', { weeks: 28 }, grant, upstream([boundaryRun]), () => monday);
+  assert.equal(result.weeks[0].week_start, '2026-03-30');
+  assert.equal(result.weeks[0].runs, 1);
+  assert.equal(result.partial, false);
 });
 test('Strava errors redact upstream bodies and forward bounded Retry-After', async () => {
   const api = new Strava({}, {}, async () => new Response('private token body', { status: 429, headers: { 'Retry-After': '120' } }));
