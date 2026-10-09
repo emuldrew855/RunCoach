@@ -88,6 +88,44 @@ export async function handleCallback(req: Request, res: Response): Promise<void>
   }
 }
 
+export function relayMcpCallback(req: Request, res: Response): void {
+  const parameters = req.query;
+  // Morgan logs originalUrl after the response; never log the relayed code/state.
+  req.originalUrl = `${req.baseUrl}${req.path}`;
+  res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+  let destination: URL;
+  try {
+    const origin = process.env.MCP_CALLBACK_ORIGIN || '';
+    destination = new URL(origin);
+    if (destination.protocol !== 'https:' || destination.origin !== origin) {
+      throw new Error('Invalid MCP callback origin');
+    }
+    destination.pathname = '/strava/callback';
+  } catch {
+    logger.error('MCP_CALLBACK_RELAY_UNCONFIGURED');
+    res.status(503).json({ error: 'MCP callback unavailable' });
+    return;
+  }
+  const state = parameters.state;
+  if (typeof state !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(state)
+    || !['code', 'error'].some(name => typeof parameters[name] === 'string' && parameters[name])) {
+    logger.warn('MCP_CALLBACK_RELAY_INVALID');
+    res.status(400).json({ error: 'Invalid MCP callback' });
+    return;
+  }
+  for (const name of ['state', 'code', 'scope', 'error']) {
+    const value = parameters[name];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || value.length > 1024) {
+      logger.warn('MCP_CALLBACK_RELAY_INVALID');
+      res.status(400).json({ error: 'Invalid MCP callback' });
+      return;
+    }
+    destination.searchParams.set(name, value);
+  }
+  res.redirect(destination.href);
+}
+
 export async function getCurrentUser(req: Request, res: Response): Promise<void> {
   try {
     if (!req.user) {

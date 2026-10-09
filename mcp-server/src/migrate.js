@@ -1,4 +1,4 @@
-import pg from 'pg';
+import { createDatabasePool } from './database.js';
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { PgStore } from './store.js';
@@ -15,14 +15,14 @@ export async function migrate(pool, options = {}) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 5000 });
+  let pool;
   try {
-    if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+    pool = createDatabasePool();
     await migrate(pool, { storageMode: process.env.STRAVA_CREDENTIAL_STORE || 'shared',
       credentialEncryptionKey: process.env.MCP_CREDENTIAL_ENCRYPTION_KEY });
     console.log('MCP schema ready');
   } catch {
     console.error('MCP migration failed; check database connection, schema permissions and credential encryption key');
     process.exitCode = 1;
-  } finally { await pool.end(); }
+  } finally { if (pool) await pool.end(); }
 }

@@ -71,6 +71,26 @@ test('isolated PostgreSQL standalone durable storage, migrations and upstream lo
   assert.equal((await pool.query("SELECT to_regclass('public.users') AS users")).rows[0].users, null,
     'Standalone test database must have no application users table');
   let store = new PgStore(pool, options);
+  await t.test('schema owner can migrate without database CREATE privileges', async () => {
+    const role = `mcp_schema_test_${randomBytes(8).toString('hex')}`;
+    await pool.query(`CREATE ROLE "${role}" NOLOGIN`);
+    const rolePool = new pg.Pool({ connectionString: url.href, options: `-c role=${role}` });
+    try {
+      await pool.query(`CREATE SCHEMA runcoach_mcp AUTHORIZATION "${role}"`);
+      assert.equal((await rolePool.query(
+        "SELECT has_database_privilege(current_user, current_database(), 'CREATE') AS allowed",
+      )).rows[0].allowed, false, 'Test role must not have database CREATE privileges');
+      await migrate(rolePool, options);
+      await migrate(rolePool, options);
+      assert.equal((await rolePool.query(
+        "SELECT to_regclass('runcoach_mcp.credentials') AS credentials",
+      )).rows[0].credentials, 'runcoach_mcp.credentials');
+    } finally {
+      await rolePool.end();
+      await pool.query('DROP SCHEMA IF EXISTS runcoach_mcp CASCADE');
+      await pool.query(`DROP ROLE "${role}"`);
+    }
+  });
   await t.test('transactional concurrent bootstrap is idempotent and preserves legacy columns', async () => {
     await Promise.all([migrate(pool, options), migrate(pool, options)]);
     await store.initialize();

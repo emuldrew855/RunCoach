@@ -20,11 +20,20 @@ export function loadConfig(env = process.env) {
     const url = new URL(redirect);
     if (url.protocol !== 'https:' || url.hash || url.username || url.password) throw new Error('Invalid MCP_REDIRECT_URIS');
   }
-  const stravaRedirect = required('STRAVA_REDIRECT_URI');
-  if (stravaRedirect !== `${base}/strava/callback`) throw new Error('STRAVA_REDIRECT_URI must match MCP_PUBLIC_URL/strava/callback');
   const origins = (env.MCP_ALLOWED_ORIGINS || '').split(',').filter(Boolean).map(x => new URL(x.trim()).origin);
   const storageMode = env.STRAVA_CREDENTIAL_STORE || 'shared';
   if (!['shared', 'standalone'].includes(storageMode)) throw new Error('Invalid STRAVA_CREDENTIAL_STORE');
+  const stravaRedirect = required('STRAVA_REDIRECT_URI');
+  let callback = `${base}/strava/callback`;
+  if (env.STRAVA_CALLBACK_RELAY_ORIGIN) {
+    const relay = new URL(env.STRAVA_CALLBACK_RELAY_ORIGIN);
+    if (storageMode !== 'shared' || relay.protocol !== 'https:' ||
+        relay.origin !== env.STRAVA_CALLBACK_RELAY_ORIGIN) {
+      throw new Error('STRAVA_CALLBACK_RELAY_ORIGIN requires shared storage and an exact HTTPS origin');
+    }
+    callback = `${relay.origin}/api/v1/auth/strava/mcp/callback`;
+  }
+  if (stravaRedirect !== callback) throw new Error('STRAVA_REDIRECT_URI must match the configured callback');
   let credentialEncryptionKey;
   if (storageMode === 'standalone') {
     const encoded = required('MCP_CREDENTIAL_ENCRYPTION_KEY');
@@ -53,6 +62,7 @@ export function loadConfig(env = process.env) {
   return {
     publicUrl: base, resource: `${base}/mcp`, production, port, host: env.HOST || '127.0.0.1',
     storageMode, credentialEncryptionKey, trustedProxyMode, trustedProxy,
+    useSharedLockFunction: storageMode === 'shared' && env.DATABASE_AUTH_MODE === 'managed-identity',
     databaseUrl: required('DATABASE_URL'), clientId: required('MCP_CLIENT_ID'),
     clientSecret: required('MCP_CLIENT_SECRET'), redirects, origins: [base, ...origins],
     stravaClientId: required('STRAVA_CLIENT_ID'), stravaClientSecret: required('STRAVA_CLIENT_SECRET'),

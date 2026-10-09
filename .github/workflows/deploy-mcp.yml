@@ -6,36 +6,49 @@ on:
     paths:
       - 'mcp-server/**'
       - 'infra/mcp.bicep'
+      - 'infra/mcp-resources.bicep'
+      - 'infra/mcp-bootstrap.bicep'
+      - 'infra/mcp-shared-*.sql'
+      - 'infra/mcp-shared-runtime.bicep'
       - '.github/workflows/deploy-mcp.yml'
+      - '.github/workflows/validate-mcp.yml'
   workflow_dispatch:
+    inputs:
+      prepareOnly:
+        description: Build and test only; do not access Azure or the production environment
+        type: boolean
+        default: false
+      refreshLockfile:
+        description: Refresh the dependency lockfile (prepare-only runs only)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: azure-mcp-production
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.prepareOnly == true && format('mcp-prepare-{0}', github.ref) || 'azure-mcp-production' }}
   cancel-in-progress: false
 
 jobs:
+  validate-mcp:
+    if: >-
+      github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' ||
+      (github.event_name == 'workflow_dispatch' && inputs.prepareOnly == true)
+    uses: ./.github/workflows/validate-mcp.yml
+    permissions:
+      contents: read
+    with:
+      refresh_lockfile: ${{ github.event_name == 'workflow_dispatch' && inputs.prepareOnly == true && inputs.refreshLockfile == true }}
+
   deploy-mcp:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    needs: validate-mcp
+    if: >-
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') &&
+      !(github.event_name == 'workflow_dispatch' && inputs.prepareOnly == true)
     runs-on: ubuntu-latest
     environment: ProdMcp
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: mcp_test
-          POSTGRES_PASSWORD: mcp-ci-test-only
-          POSTGRES_DB: mcp_shared_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U mcp_test -d mcp_shared_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     env:
       AZURE_MCP_CLIENT_ID: ${{ secrets.AZURE_MCP_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -45,6 +58,9 @@ jobs:
       STRAVA_CLIENT_ID: ${{ vars.STRAVA_CLIENT_ID }}
       MCP_CLIENT_ID: ${{ vars.MCP_CLIENT_ID }}
       MCP_POSTGRES_HOST: ${{ vars.MCP_POSTGRES_HOST }}
+      MCP_POSTGRES_DATABASE: ${{ vars.MCP_POSTGRES_DATABASE || 'runcoach_mcp' }}
+      STRAVA_CREDENTIAL_STORE: ${{ vars.STRAVA_CREDENTIAL_STORE || 'standalone' }}
+      STRAVA_CALLBACK_RELAY_ORIGIN: ${{ vars.STRAVA_CALLBACK_RELAY_ORIGIN }}
     steps:
       - name: Validate protected environment configuration
         shell: bash
@@ -75,59 +91,38 @@ jobs:
             process.exit(1);
           }
           if (!/^[a-z0-9-]+\.postgres\.database\.azure\.com$/.test(process.env.MCP_POSTGRES_HOST)) {
-            console.error('::error::Invalid dedicated MCP PostgreSQL host');
+            console.error('::error::Invalid MCP PostgreSQL host');
             process.exit(1);
+          }
+          if (!['standalone', 'shared'].includes(process.env.STRAVA_CREDENTIAL_STORE) ||
+              !/^[a-z][a-z0-9_]*$/.test(process.env.MCP_POSTGRES_DATABASE)) {
+            console.error('::error::Invalid credential store or database name');
+            process.exit(1);
+          }
+          const relay = process.env.STRAVA_CALLBACK_RELAY_ORIGIN;
+          if (relay) {
+            let valid = false;
+            try {
+              const url = new URL(relay);
+              valid = process.env.STRAVA_CREDENTIAL_STORE === 'shared' &&
+                url.protocol === 'https:' && url.origin === relay;
+            } catch {}
+            if (!valid) {
+              console.error('::error::Invalid shared Strava callback relay');
+              process.exit(1);
+            }
           }
           NODE
 
-      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Install and validate MCP
-        working-directory: mcp-server
-        env:
-          PGHOST: 127.0.0.1
-          PGPORT: '5432'
-          PGUSER: mcp_test
-          PGPASSWORD: mcp-ci-test-only
-          MCP_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/mcp_shared_test
-          MCP_STORAGE_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/mcp_storage_test
-          MCP_STANDALONE_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/mcp_standalone_test
-          MCP_STARTUP_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/mcp_startup_test
-        run: |
-          set -euo pipefail
-          npm ci
-          node --input-type=module <<'NODE'
-          import pg from 'pg';
-          const pool = new pg.Pool({ connectionString: process.env.MCP_TEST_DATABASE_URL });
-          try {
-            // Separate disposable fixtures: never connect tests to Azure PostgreSQL.
-            for (const name of ['mcp_storage_test', 'mcp_standalone_test', 'mcp_startup_test']) {
-              await pool.query(`CREATE DATABASE ${name}`);
-            }
-          } finally {
-            await pool.end();
-          }
-          NODE
-          # The packaged startup fixture intentionally inherits only its URL, not PG*.
-          export MCP_STARTUP_TEST_DATABASE_URL="$(node --input-type=module -e 'const url = new URL(process.env.MCP_STARTUP_TEST_DATABASE_URL); url.username = process.env.PGUSER; url.password = process.env.PGPASSWORD; process.stdout.write(url.href);')"
-          npm test -- --test-concurrency=1
-          npm run check
-
-      - name: Package code and production dependencies only
-        working-directory: mcp-server
-        run: |
-          set -euo pipefail
-          mkdir -p deploy/schema
-          cp package.json package-lock.json schema.sql deploy/
-          cp -r src deploy/
-          cp schema/tools.json deploy/schema/
-          cd deploy
-          npm ci --omit=dev
-          # The explicit allowlist excludes .env, tests, and full-stack code.
-          zip -qr ../mcp-deploy.zip src schema schema.sql package.json package-lock.json node_modules
+      - name: Download validated MCP package
+        uses: actions/download-artifact@v4
+        with:
+          name: mcp-deploy
+          path: mcp-server
 
       - name: Azure OIDC login
         uses: azure/login@v2
@@ -162,16 +157,24 @@ jobs:
             MCP_PUBLIC_URL: process.env.MCP_PUBLIC_URL,
             MCP_CLIENT_ID: process.env.MCP_CLIENT_ID,
             STRAVA_CLIENT_ID: process.env.STRAVA_CLIENT_ID,
-            STRAVA_CREDENTIAL_STORE: 'standalone',
+            STRAVA_CREDENTIAL_STORE: process.env.STRAVA_CREDENTIAL_STORE,
             TRUSTED_PROXY_MODE: 'azure-app-service',
             HOST: '0.0.0.0',
             NODE_ENV: 'production',
-            STRAVA_REDIRECT_URI: `${process.env.MCP_PUBLIC_URL}/strava/callback`,
+            STRAVA_REDIRECT_URI: process.env.STRAVA_CALLBACK_RELAY_ORIGIN
+              ? `${process.env.STRAVA_CALLBACK_RELAY_ORIGIN}/api/v1/auth/strava/mcp/callback`
+              : `${process.env.MCP_PUBLIC_URL}/strava/callback`,
           };
+          if (process.env.STRAVA_CALLBACK_RELAY_ORIGIN) {
+            expected.STRAVA_CALLBACK_RELAY_ORIGIN = process.env.STRAVA_CALLBACK_RELAY_ORIGIN;
+          } else if (settings.STRAVA_CALLBACK_RELAY_ORIGIN) {
+            console.error('::error::Unexpected callback relay setting');
+            process.exit(1);
+          }
           if (!target.httpsOnly || `https://${target.host}` !== process.env.MCP_PUBLIC_URL ||
               Object.entries(expected).some(([key, value]) => settings[key] !== value) ||
               !['DATABASE_URL', 'MCP_CLIENT_SECRET', 'STRAVA_CLIENT_SECRET', 'MCP_REDIRECT_URIS'].every(key => settings[key])) {
-            console.error('::error::Target does not match the bootstrapped standalone MCP runtime');
+            console.error('::error::Target does not match the configured MCP runtime');
             process.exit(1);
           }
           const key = settings.MCP_CREDENTIAL_ENCRYPTION_KEY || '';
@@ -179,11 +182,20 @@ jobs:
           let verifiedTls = false;
           try {
             const database = new URL(settings.DATABASE_URL);
-            verifiedTls = database.protocol === 'postgresql:' && database.pathname === '/runcoach_mcp' &&
+            verifiedTls = database.protocol === 'postgresql:' &&
+              database.pathname === `/${process.env.MCP_POSTGRES_DATABASE}` &&
               database.hostname === process.env.MCP_POSTGRES_HOST &&
+              database.searchParams.getAll('sslmode').length === 1 &&
               database.searchParams.get('sslmode') === 'verify-full';
+            const mode = settings.DATABASE_AUTH_MODE || 'password';
+            verifiedTls &&= (mode === 'password' && process.env.STRAVA_CREDENTIAL_STORE === 'standalone') ||
+              (mode === 'managed-identity' &&
+              decodeURIComponent(database.username) === process.env.AZURE_MCP_APP_NAME && !database.password &&
+              [...database.searchParams.keys()].every(key => key === 'sslmode'));
           } catch {}
-          if (decoded.length !== 32 || decoded.toString('base64') !== key || !verifiedTls) {
+          const encryptionValid = process.env.STRAVA_CREDENTIAL_STORE !== 'standalone' ||
+            (decoded.length === 32 && decoded.toString('base64') === key);
+          if (!encryptionValid || !verifiedTls) {
             console.error('::error::Invalid persistent credential encryption or database TLS configuration');
             process.exit(1);
           }
@@ -220,6 +232,7 @@ jobs:
           const auth = await discovery('/.well-known/oauth-authorization-server');
           const resource = await discovery('/.well-known/oauth-protected-resource/mcp');
           if (auth.issuer !== base || auth.authorization_endpoint !== `${base}/oauth/authorize` ||
+              auth.authorization_response_iss_parameter_supported !== true ||
               auth.token_endpoint !== `${base}/oauth/token` ||
               !auth.code_challenge_methods_supported?.includes('S256') ||
               resource.resource !== `${base}/mcp` || !resource.authorization_servers?.includes(base)) {

@@ -70,6 +70,7 @@ test('OAuth/MCP HTTP and PostgreSQL transaction integration', { skip: !process.e
     const csrf = body.match(/name="csrf" value="([^"]+)"/)[1];
     const approved = await post('/oauth/consent', { request: flow.state, csrf, decision }, flow.cookie);
     assert.equal(approved.status, 302);
+    assert.equal(new URL(approved.headers.get('location')).searchParams.get('iss'), config.publicUrl);
     return { ...flow, csrf, approved, code: new URL(approved.headers.get('location')).searchParams.get('code') };
   };
   const token = async flow => {
@@ -82,7 +83,10 @@ test('OAuth/MCP HTTP and PostgreSQL transaction integration', { skip: !process.e
   try {
     await t.test('metadata, untrusted origins, redirect and PKCE rejection', async () => {
       const metadata = await request('/.well-known/oauth-authorization-server');
-      assert.deepEqual((await metadata.json()).code_challenge_methods_supported, ['S256']);
+      const discovery = await metadata.json();
+      assert.deepEqual(discovery.code_challenge_methods_supported, ['S256']);
+      assert.equal(discovery.authorization_response_iss_parameter_supported, true);
+      assert.equal(discovery.issuer, config.publicUrl);
       assert.equal((await request('/health', { headers: { Host: 'evil.example.com' } })).status, 403);
       assert.equal((await request('/health', { headers: { Origin: 'https://evil.example.com' } })).status, 403);
       for (const changes of [{ redirect_uri: 'https://evil.example.com/cb' }, { scope: 'write' }, { resource: 'https://evil.example.com/mcp' },
@@ -117,6 +121,51 @@ test('OAuth/MCP HTTP and PostgreSQL transaction integration', { skip: !process.e
       assert.equal(user.access_token, 'test-upstream-' + exchanges);
       assert.equal(user.first_name, 'Existing Runner');
       assert.equal(user.email, 'private@example.invalid');
+    });
+    await t.test('provider denial is browser-bound, one-use and includes issuer identification', async () => {
+      const flow = await authorize();
+      const path = '/strava/callback?' + new URLSearchParams({ state: flow.state, error: 'access_denied' });
+      assert.equal((await request(path)).status, 400);
+      assert.equal((await request(path, { headers: { Cookie: 'mcp_browser=wrong' } })).status, 400);
+      const before = exchanges;
+      const denied = await request(path, { headers: { Cookie: flow.cookie } });
+      assert.equal(denied.status, 302);
+      const callback = new URL(denied.headers.get('location'));
+      assert.equal(callback.origin, 'https://chatgpt.com');
+      assert.equal(callback.searchParams.get('error'), 'access_denied');
+      assert.equal(callback.searchParams.get('state'), 'outer-client-state');
+      assert.equal(callback.searchParams.get('iss'), config.publicUrl);
+      assert.equal(exchanges, before);
+      assert.equal((await request(path, { headers: { Cookie: flow.cookie } })).status, 400);
+    });
+    await t.test('managed identity locks and rotates with only credential-column grants', async () => {
+      const role = 'mcp_credential_acl_test';
+      await pool.query(`CREATE ROLE "${role}" NOLOGIN`);
+      const limitedPool = new pg.Pool({ connectionString: process.env.MCP_TEST_DATABASE_URL, options: `-c role=${role}` });
+      try {
+        await pool.query(await readFile(new URL('../../infra/mcp-shared-lock.sql', import.meta.url), 'utf8'));
+        await pool.query(`GRANT USAGE ON SCHEMA public,runcoach_mcp TO "${role}";
+          GRANT SELECT ON runcoach_mcp.grants TO "${role}";
+          GRANT SELECT (id,strava_id,access_token,refresh_token,token_expires_at) ON public.users TO "${role}";
+          GRANT INSERT (strava_id,access_token,refresh_token,token_expires_at) ON public.users TO "${role}";
+          GRANT UPDATE (access_token,refresh_token,token_expires_at,updated_at) ON public.users TO "${role}";
+          GRANT USAGE ON SEQUENCE public.users_id_seq TO "${role}";
+          GRANT EXECUTE ON FUNCTION public.runcoach_mcp_lock_credentials() TO "${role}"`);
+        const limitedStore = new PgStore(limitedPool, { useSharedLockFunction: true });
+        await limitedStore.initialize();
+        await limitedStore.authorizeCredentials(async () => ({
+          athleteId: 1001, credentials: { access_token: 'limited', refresh_token: 'limited-refresh', expires_at: 1 },
+        }));
+        assert.equal(await limitedStore.credentials(1001, async () => ({
+          value: 'rotated', credentials: { access_token: 'rotated', refresh_token: 'rotated-refresh', expires_at: 2 },
+        })), 'rotated');
+        await assert.rejects(limitedPool.query('SELECT email FROM public.users'), /permission denied/);
+        await assert.rejects(limitedPool.query("UPDATE public.users SET first_name='forbidden'"), /permission denied/);
+        await assert.rejects(limitedPool.query('LOCK TABLE public.users IN EXCLUSIVE MODE'), /permission denied|transaction blocks/);
+      } finally {
+        await limitedPool.end();
+        await pool.query(`DROP OWNED BY "${role}"; DROP ROLE "${role}"`);
+      }
     });
     let flow, tokens;
     await t.test('mandatory PKCE, client authentication, atomic code replay', async () => {
